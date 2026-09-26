@@ -57,7 +57,7 @@ class SyntheticBB(IStrategy):
 @pytest.fixture
 def strategy_file(tmp_path: Path) -> Path:
     p = tmp_path / "SyntheticBB.py"
-    p.write_text(STRATEGY)
+    p.write_text(STRATEGY, encoding="utf-8")
     return p
 
 
