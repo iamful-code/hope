@@ -28,7 +28,11 @@ def git_branch() -> str:
         return ""
 
 
-async def run_live(cfg: Config, duration_secs: float | None = None, run_name: str | None = None) -> dict:
+async def run_live(cfg: Config, duration_secs: float | None = None, run_name: str | None = None,
+                   warmup_bars: int | None = None) -> dict:
+    """warmup_bars: сколько закрытых свечей подгрузить до старта (None = strategy.history_bars, 0 = без прогрева)."""
+    if warmup_bars is None:
+        warmup_bars = cfg.strategy.history_bars
     data_dir = Path(cfg.run.data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     strategy_cls = load_strategy_class(cfg.strategy.class_path)
@@ -36,17 +40,23 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
 
     rest = BybitRest(cfg.exchange.rest_url)
     catalog = InstrumentCatalog(cfg.exchange.category, data_dir)
-    try:
-        src = await catalog.load(rest, cfg.exchange.symbols, cfg.exchange.quote_coin)
-    finally:
-        await rest.close()
+    src = await catalog.load(rest, cfg.exchange.symbols, cfg.exchange.quote_coin)
     log.info("инструменты: источник=%s, всего=%d", src, len(catalog.metas))
     symbols = list(cfg.exchange.symbols)
     if not symbols:
         symbols = catalog.liquid_symbols(cfg.exchange.min_turnover_24h_usd, cfg.exchange.max_symbols, cfg.exchange.quote_coin)
         if not symbols:
+            await rest.close()
             raise RuntimeError("список символов пуст: задайте exchange.symbols или откройте доступ к REST для автоотбора")
     log.info("символы (%d): %s", len(symbols), ", ".join(symbols[:20]) + (" ..." if len(symbols) > 20 else ""))
+    # прогрев свечей (если стратегии нужна история)
+    warm: dict[str, list] = {}
+    if warmup_bars > 0:
+        from .warmup import warmup_candles
+
+        warm = await warmup_candles(symbols, cfg.strategy.timeframe, warmup_bars, rest if src == "rest" else None,
+                                    cfg.exchange.category, data_dir, now_ms())
+    await rest.close()
 
     store = Store(cfg.store.db_path)
     run_id = store.start_run(
@@ -63,6 +73,11 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
 
     core = EngineCore(cfg, strategy, store, "live", {s: catalog.get(s) for s in symbols}, symbols, use_book=True,
                       catalog=catalog)
+    for s, cs in warm.items():
+        for c in cs:
+            core.sym[s].candles.on_kline(c)
+    if warm:
+        log.info("прогрев: %s", ", ".join(f"{s}:{len(cs)}" for s, cs in list(warm.items())[:8]) + (" ..." if len(warm) > 8 else ""))
     q: asyncio.Queue = asyncio.Queue(maxsize=100_000)
     ws = BybitPublicWS(cfg.exchange.ws_url, q, cfg.exchange.topics_per_connection, cfg.exchange.args_per_subscribe)
     depth = strategy.orderbook_depth or cfg.exchange.orderbook_depth

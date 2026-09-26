@@ -19,3 +19,8 @@ build/
 # IDE
 .idea/
 .vscode/
+# Freqtrade (adapters/freqtrade)
+adapters/freqtrade/user_data/*.sqlite*
+adapters/freqtrade/user_data/logs/*.log
+adapters/freqtrade/user_data/data/
+adapters/freqtrade/.env

@@ -1,0 +1,62 @@
+# Freqtrade (dry-run на Bybit USDT-перпах) + экспортёр его сделок в БД hope + монитор.
+# Запуск из этой папки:
+#   cp .env.example .env            # FT_STRATEGY, FT_API_USER, FT_API_PASSWORD, FT_JWT_SECRET
+#   docker compose up -d --build    # монитор: http://localhost:8000, FreqUI: http://127.0.0.1:8080
+# Файл стратегии кладётся в user_data/strategies/, FT_STRATEGY = имя класса стратегии.
+# БД hope берётся из ../../data (общая с основным docker-compose репозитория), поэтому запуски
+# Freqtrade видны в одном мониторе рядом с запусками движка hope.
+services:
+  freqtrade:
+    image: freqtradeorg/freqtrade:stable
+    container_name: hope-freqtrade
+    restart: unless-stopped
+    volumes:
+      - ./user_data:/freqtrade/user_data
+    ports:
+      - "127.0.0.1:${FT_API_PORT:-8080}:8080"
+    environment:
+      # Переопределения config.json: FREQTRADE__<секция>__<ключ>; секреты не дублируются в JSON.
+      - FREQTRADE__API_SERVER__USERNAME=${FT_API_USER}
+      - FREQTRADE__API_SERVER__PASSWORD=${FT_API_PASSWORD}
+      - FREQTRADE__API_SERVER__JWT_SECRET_KEY=${FT_JWT_SECRET}
+      - FREQTRADE__API_SERVER__WS_TOKEN=${FT_WS_TOKEN:-change-me-ws-token}
+      - FREQTRADE__BOT_NAME=${FT_BOT_NAME:-hope-ft}
+    command: >
+      trade
+      --config /freqtrade/user_data/config.json
+      --strategy ${FT_STRATEGY}
+      --db-url sqlite:////freqtrade/user_data/tradesv3.dryrun.sqlite
+      --logfile /freqtrade/user_data/logs/freqtrade.log
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+
+  ft-exporter:
+    build: ../..
+    container_name: hope-ft-exporter
+    restart: unless-stopped
+    # логин/пароль читаются из FT_API_USER / FT_API_PASSWORD (см. `hope ft-export --help`)
+    command: ["ft-export", "--url", "http://freqtrade:8080", "--db", "/app/data/hope.db",
+              "--interval", "${FT_EXPORT_INTERVAL:-10}"]
+    environment:
+      - FT_API_USER=${FT_API_USER}
+      - FT_API_PASSWORD=${FT_API_PASSWORD}
+    volumes:
+      - ../../data:/app/data
+    depends_on:
+      - freqtrade
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+  monitor:
+    build: ../..
+    container_name: hope-ft-monitor
+    restart: unless-stopped
+    command: ["monitor", "--db", "/app/data/hope.db", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${MONITOR_PORT:-8000}:8000"
+    volumes:
+      - ../../data:/app/data
+    depends_on:
+      - ft-exporter

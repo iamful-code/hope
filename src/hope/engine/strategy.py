@@ -34,6 +34,7 @@ class Context:
     """API, доступный стратегии. Реализуется движком (EngineCore)."""
 
     mode: str = "live"
+    cfg: Any = None  # hope.config.Config текущего запуска
     params: dict[str, Any] = {}
     symbols: list[str] = []
     now: int = 0

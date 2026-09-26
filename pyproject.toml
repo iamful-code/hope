@@ -21,6 +21,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
+# запуск стратегий Freqtrade внутри hope (адаптер hope.adapters.freqtrade.runner); тянет pandas 2.x, ccxt, ta-lib
+freqtrade = ["freqtrade>=2026.8", "technical>=1.5"]
 
 [project.scripts]
 hope = "hope.cli:app"

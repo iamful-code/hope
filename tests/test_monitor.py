@@ -104,7 +104,9 @@ def test_runs_list(client):
     assert j["multi"] is False and j["dbs"][0]["ok"] is True
     runs = {r["id"]: r for r in j["runs"]}
     assert set(runs) == {1, 2}
-    assert runs[1]["live"] is True and runs[1]["n_fills"] == 0 and runs[1]["last_equity_ts"] == 6000
+    # запуск со status=running, но последний снимок equity в 1970 году -> монитор считает его умершим (stale)
+    assert runs[1]["live"] is False and runs[1]["status"] == "stale"
+    assert runs[1]["n_fills"] == 0 and runs[1]["last_equity_ts"] == 6000
     assert runs[2]["status"] == "finished" and runs[2]["n_fills"] == 9 and runs[2]["net_pnl"] == pytest.approx(15.0)
     assert runs[2]["params"] == {"fast": 9} and runs[2]["symbols"] == ["X", "Y"]
     assert "config_json" not in runs[2]

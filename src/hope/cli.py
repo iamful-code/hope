@@ -46,6 +46,7 @@ def run(
     symbols: str = typer.Option(None, "--symbols", "-s", help="Список символов через запятую"),
     duration: float = typer.Option(None, "--duration", help="Остановиться через N секунд"),
     name: str = typer.Option(None, "--name", help="Имя запуска"),
+    warmup: int = typer.Option(None, "--warmup", help="Свечей прогрева (по умолчанию strategy.history_bars; 0 = без прогрева)"),
     set_: list[str] = typer.Option(None, "--set", help="Переопределить ключ: section.key=value"),
     verbose: bool = typer.Option(False, "-v"),
 ) -> None:
@@ -54,7 +55,7 @@ def run(
     from .engine.live import run_live
 
     cfg = _load(config, symbols, set_)
-    asyncio.run(run_live(cfg, duration, name))
+    asyncio.run(run_live(cfg, duration, name, warmup))
 
 
 @app.command()
@@ -67,6 +68,7 @@ def backtest(
     queue_usd: float = typer.Option(20_000.0, "--queue-usd", help="Оценка очереди впереди лимитного ордера, USDT"),
     funding: float = typer.Option(0.0001, "--funding", help="Ставка фандинга за 8ч в бэктесте"),
     db: str = typer.Option(None, "--db", help="Путь к БД результатов (по умолчанию store.db_path)"),
+    mode: str = typer.Option("trades", "--mode", help="trades (каждая сделка, очередь) | candles (быстро, по свечам)"),
     set_: list[str] = typer.Option(None, "--set"),
     verbose: bool = typer.Option(False, "-v"),
 ) -> None:
@@ -75,7 +77,8 @@ def backtest(
     from .engine.backtest import run_backtest
 
     cfg = _load(config, symbols, set_)
-    summary = asyncio.run(run_backtest(cfg, from_, to, name, queue_usd, funding, db))
+    summary = asyncio.run(run_backtest(cfg, from_, to, name, queue_usd, funding, db, mode=mode))
+    summary.pop("instruments", None)
     typer.echo(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
 
 
@@ -188,6 +191,46 @@ def scan(
             typer.echo(f"сохранено: {out}")
 
     asyncio.run(go())
+
+
+@app.command("ft-export")
+def ft_export(
+    url: str = typer.Option("http://127.0.0.1:8080", "--url", help="Адрес REST API Freqtrade"),
+    user: str = typer.Option(None, "--user", envvar="FT_API_USER", help="api_server.username (или env FT_API_USER)"),
+    password: str = typer.Option(None, "--password", envvar="FT_API_PASSWORD", help="api_server.password (или env FT_API_PASSWORD)"),
+    db: str = typer.Option("data/hope.db", "--db", help="БД результатов hope"),
+    interval: float = typer.Option(10.0, "--interval", help="Период опроса API, с"),
+    name: str = typer.Option(None, "--name", help="Имя запуска (по умолчанию ft:<стратегия>:<bot_name>)"),
+    state: str = typer.Option(None, "--state", help="Файл состояния экспортёра (по умолчанию <db>.ftexport.json)"),
+    once: bool = typer.Option(False, "--once", help="Один опрос и выход (запуск не завершается)"),
+    verbose: bool = typer.Option(False, "-v"),
+) -> None:
+    """Экспорт сделок работающего Freqtrade (REST API) в БД hope как запуск engine=freqtrade; до Ctrl-C."""
+    _setup_logging(verbose)
+    import signal
+
+    from .adapters.freqtrade.exporter import FreqtradeExporter
+
+    exp = FreqtradeExporter(url, user, password, db, run_name=name, interval_secs=interval, state_path=state)
+
+    async def go():
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop.set)
+            except (NotImplementedError, RuntimeError):
+                pass  # Windows / не главный поток: остановка по KeyboardInterrupt ниже
+        await exp.run(stop, once=once)
+
+    try:
+        asyncio.run(go())
+    except KeyboardInterrupt:
+        exp.finish("stopped")
+    finally:
+        exp.close()
+    if once:
+        typer.echo(json.dumps(exp.summary(), ensure_ascii=False))
 
 
 if __name__ == "__main__":
