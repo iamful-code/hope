@@ -157,6 +157,38 @@ def env_overrides(prefix: str = "HOPE__") -> dict:
     return out
 
 
+def load_dotenv(path: str | Path = ".env", override: bool = False) -> dict[str, str]:
+    """Прочитать KEY=VALUE из .env (без внешних зависимостей) и выставить в окружение.
+
+    Уже заданные переменные окружения не перезаписываются (override=False): значения из консоли,
+    Docker или планировщика задач важнее файла. Возвращает применённые пары."""
+    p = Path(path)
+    applied: dict[str, str] = {}
+    if not p.is_file():
+        return applied
+    for raw in p.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.lower().startswith("export "):
+            line = line[7:].lstrip()
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if not key or (not override and key in os.environ):
+            continue
+        os.environ[key] = value
+        applied[key] = value
+    return applied
+
+
+def default_strategy_config() -> Path | None:
+    """Конфиг стратегии по умолчанию: переменная STRATEGY_CONFIG (из окружения или .env)."""
+    v = os.environ.get("STRATEGY_CONFIG", "").strip()
+    return Path(v) if v else None
+
+
 def base_config_path() -> Path:
     env = os.environ.get("HOPE_BASE_CONFIG")
     if env:

@@ -9,6 +9,8 @@
 
 ## 1. Запуск одной стратегии (Docker)
 
+> Windows: см. [`docs/WINDOWS.md`](WINDOWS.md) — `windows\install.cmd`, затем `windows\start.cmd`.
+
 ```bash
 git clone https://github.com/iamful-code/hope && cd hope
 git checkout strategy/queue-mm            # или strategy/ft-e0v1en, strategy/ft-binhv45 ...
@@ -18,15 +20,15 @@ docker compose logs -f engine              # лог движка
 # монитор: http://localhost:8000  (вкладка «Обзор» → «Вердикт»)
 ```
 
-Остановка: `docker compose down` (движок закроет позиции? нет — paper-позиции просто останутся в БД; запуск
+Остановка: `docker compose down` (открытые paper-позиции не закрываются, они остаются в БД; запуск
 получит статус finished). Данные — в `./data/hope.db`.
 
 Без Docker:
 
 ```bash
 uv venv .venv && uv pip install -p .venv/bin/python -e ".[dev]"        # + ".[freqtrade]" для веток ft-*
-.venv/bin/hope run -c strategies/<имя>/config.yaml
-.venv/bin/hope monitor --db data/hope.db --port 8000
+.venv/bin/hope run --restart               # стратегия из STRATEGY_CONFIG в .env; или -c strategies/<имя>/config.yaml
+.venv/bin/hope monitor --db data/hope.db --port 8000 --open
 ```
 
 ## 2. Несколько стратегий параллельно
@@ -63,7 +65,7 @@ profit factor, доля комиссий, доля мейкерских испо
 1. Выбрать кандидата из `docs/strategy_catalog.md` (Top-15, порядок по движкам).
 2. Создать ветку `strategy/<имя>` от базовой, положить код в `strategies/<имя>/` (`strategy.py` + `config.yaml`
    + `README.md`; для Freqtrade — файл стратегии без изменений и `class: hope.adapters.freqtrade.runner:FreqtradeStrategy`),
-   `ln -sfn <имя> strategies/current`, поправить `STRATEGY_CONFIG` в `.env.example`.
+   указать её конфиг в `STRATEGY_CONFIG` в `.env.example` (и `HOPE_EXTRAS=freqtrade`, если это стратегия Freqtrade).
 3. Бэктест-фильтр: `hope backtest -c ... --mode candles` (свечные) или `--mode trades` (тиковые/мейкерские),
    неделя истории, 6–15 символов. Убыточные после комиссий с ≥ 100 сделок — в README со статусом `✗ не прошла`,
    в live не запускать.
