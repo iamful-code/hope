@@ -80,6 +80,27 @@ def backtest(
 
 
 @app.command()
+def replay(
+    config: list[Path] = typer.Option(None, "--config", "-c"),
+    source_db: str = typer.Option("data/hope.db", "--source-db", help="БД с записанными рыночными данными"),
+    source_run: int = typer.Option(..., "--source-run", help="run_id запуска с store.record_market=true"),
+    symbols: str = typer.Option(None, "--symbols", "-s"),
+    name: str = typer.Option(None, "--name"),
+    db: str = typer.Option(None, "--db", help="Куда писать результаты (по умолчанию store.db_path)"),
+    set_: list[str] = typer.Option(None, "--set"),
+    verbose: bool = typer.Option(False, "-v"),
+) -> None:
+    """Прогнать стратегию по записанным BBO и сделкам другого запуска (честная очередь для мейкерских стратегий)."""
+    _setup_logging(verbose)
+    from .engine.replay import run_replay
+
+    cfg = _load(config, symbols, set_)
+    syms = [x.strip().upper() for x in symbols.split(",")] if symbols else None
+    summary = asyncio.run(run_replay(cfg, source_db, source_run, name, db, syms))
+    typer.echo(json.dumps({k: v for k, v in summary.items() if k != "instruments"}, ensure_ascii=False, indent=2, default=str))
+
+
+@app.command()
 def download(
     symbols: str = typer.Option(..., "--symbols", "-s"),
     from_: str = typer.Option(..., "--from"),
