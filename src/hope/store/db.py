@@ -33,7 +33,8 @@ def connect_readonly(path: str | Path) -> sqlite3.Connection:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"БД не найдена: {p}")
-    con = sqlite3.connect(f"file:{p}?mode=ro", uri=True, check_same_thread=False)
+    # as_uri() даёт file:///C:/Users/%D0%98.../hope.db на Windows и корректно экранирует пробелы/кириллицу
+    con = sqlite3.connect(f"{p.resolve().as_uri()}?mode=ro", uri=True, check_same_thread=False)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA busy_timeout=5000")
     return con
