@@ -66,6 +66,9 @@ class FreqtradeStrategy(Strategy):
     name = "freqtrade"
     needs_trades = True
     needs_tickers = False
+    # свечи в live — из kline биржи: пропуск сделок при переподключении WebSocket не искажает свечи и сигналы
+    needs_kline = True
+    candles_from_kline = True
 
     @classmethod
     def default_params(cls) -> dict[str, Any]:

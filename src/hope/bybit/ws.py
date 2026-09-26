@@ -28,8 +28,8 @@ def _ssl_context() -> ssl.SSLContext:
     return ctx
 
 
-def parse_message(raw: str | bytes) -> MarketEvent | None:
-    """Разобрать сообщение Bybit в событие. Служебные сообщения (pong, subscribe) -> None."""
+def parse_message(raw: str | bytes) -> MarketEvent | list[MarketEvent] | None:
+    """Разобрать сообщение Bybit в событие (для kline — список событий). Служебные сообщения -> None."""
     msg = json.loads(raw)
     topic = msg.get("topic")
     if not topic:
@@ -54,19 +54,25 @@ def parse_message(raw: str | bytes) -> MarketEvent | None:
         return TradesEvent(symbol=topic.split(".", 1)[1], trades=trades)
     if topic.startswith("kline."):
         _, interval, symbol = topic.split(".", 2)
-        k = data[-1]
-        c = Candle(
-            ts_open=int(k["start"]),
-            ts_close=int(k["end"]) + 1,
-            open=float(k["open"]),
-            high=float(k["high"]),
-            low=float(k["low"]),
-            close=float(k["close"]),
-            volume=float(k.get("volume") or 0),
-            turnover=float(k.get("turnover") or 0),
-            closed=bool(k.get("confirm")),
-        )
-        return KlineEvent(symbol=symbol, interval=interval, candle=c)
+        # в одном сообщении может прийти несколько свечей (подтверждённая закрытая и новая) — отдаём все
+        return [
+            KlineEvent(
+                symbol=symbol,
+                interval=interval,
+                candle=Candle(
+                    ts_open=int(k["start"]),
+                    ts_close=int(k["end"]) + 1,
+                    open=float(k["open"]),
+                    high=float(k["high"]),
+                    low=float(k["low"]),
+                    close=float(k["close"]),
+                    volume=float(k.get("volume") or 0),
+                    turnover=float(k.get("turnover") or 0),
+                    closed=bool(k.get("confirm")),
+                ),
+            )
+            for k in data
+        ]
     if topic.startswith("tickers."):
         d = data
         return TickerEvent(symbol=d.get("symbol") or topic.split(".", 1)[1], ts=int(msg.get("ts") or 0), fields=d)
@@ -78,8 +84,21 @@ class BybitPublicWS:
 
     PING_SECS = 20
 
-    def __init__(self, url: str, out: asyncio.Queue, topics_per_connection: int = 200, args_per_subscribe: int = 50) -> None:
+    # соединение, прожившее меньше SHORT_LIVED_SECS, считается «коротким»; после ROTATE_AFTER коротких подряд
+    # или FAILS_TO_ROTATE неудачных подключений подряд переключаемся на следующий адрес из списка
+    SHORT_LIVED_SECS = 120.0
+    ROTATE_AFTER = 3
+    FAILS_TO_ROTATE = 2
+
+    def __init__(self, url: str, out: asyncio.Queue, topics_per_connection: int = 200, args_per_subscribe: int = 50,
+                 fallback_urls: list[str] | None = None, proxy: str = "auto") -> None:
         self.url = url
+        self.urls = [url] + [u for u in (fallback_urls or []) if u and u != url]
+        self._url_idx: dict[int, int] = {}
+        self._short: dict[int, int] = {}
+        self._fails: dict[int, int] = {}
+        # auto — как решит библиотека (переменные окружения и системный прокси Windows); none — напрямую; иначе URL прокси
+        self.proxy_mode = (proxy or "auto").strip()
         self.out = out
         self.topics_per_connection = max(1, topics_per_connection)
         self.args_per_subscribe = max(1, args_per_subscribe)
@@ -110,17 +129,64 @@ class BybitPublicWS:
     def stop(self) -> None:
         self._stop.set()
 
+    def current_url(self, idx: int) -> str:
+        return self.urls[self._url_idx.get(idx, 0) % len(self.urls)]
+
+    def _proxy_arg(self):
+        m = self.proxy_mode.lower()
+        if m in ("", "auto"):
+            return True
+        if m in ("none", "off", "direct", "no"):
+            return None
+        return self.proxy_mode
+
+    def proxy_in_use(self, url: str | None = None) -> str | None:
+        """Какой прокси будет использован для соединения (для диагностики в логе)."""
+        arg = self._proxy_arg()
+        if arg is None:
+            return None
+        if isinstance(arg, str):
+            return arg
+        try:
+            from websockets.uri import get_proxy, parse_uri
+
+            return get_proxy(parse_uri(url or self.url))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def after_disconnect(self, idx: int, lived_secs: float | None) -> str | None:
+        """Учесть обрыв (lived_secs=None — подключиться не удалось). Возвращает новый адрес при переключении."""
+        if len(self.urls) < 2:
+            return None
+        if lived_secs is None:
+            self._fails[idx] = self._fails.get(idx, 0) + 1
+        else:
+            self._fails[idx] = 0
+            self._short[idx] = self._short.get(idx, 0) + 1 if lived_secs < self.SHORT_LIVED_SECS else 0
+        if self._short.get(idx, 0) >= self.ROTATE_AFTER or self._fails.get(idx, 0) >= self.FAILS_TO_ROTATE:
+            self._short[idx] = self._fails[idx] = 0
+            self._url_idx[idx] = (self._url_idx.get(idx, 0) + 1) % len(self.urls)
+            return self.current_url(idx)
+        return None
+
     async def _conn_loop(self, idx: int, topics: list[str]) -> None:
         backoff = 1.0
         while not self._stop.is_set():
+            connected_at: float | None = None
+            msgs_at_connect = 0
+            url = self.current_url(idx)
             try:
                 async with websockets.connect(
-                    self.url, ssl=self._ssl, open_timeout=15, ping_interval=None, max_queue=4096, compression=None,
+                    url, ssl=self._ssl, open_timeout=15, ping_interval=None, max_queue=4096, compression=None,
+                    proxy=self._proxy_arg(),
                 ) as ws:
-                    await self.out.put(StatusEvent(idx, f"connected, topics={len(topics)}", now_ms()))
+                    host = url.split("/")[2]
+                    await self.out.put(StatusEvent(idx, f"connected to {host}, topics={len(topics)}", now_ms()))
                     for i in range(0, len(topics), self.args_per_subscribe):
                         await ws.send(json.dumps({"op": "subscribe", "req_id": f"{idx}-{i}", "args": topics[i : i + self.args_per_subscribe]}))
                     backoff = 1.0
+                    connected_at = time.monotonic()
+                    msgs_at_connect = self.stats["messages"]
                     self._last_msg_mono[idx] = time.monotonic()
                     pinger = asyncio.create_task(self._pinger(idx, ws))
                     try:
@@ -139,8 +205,20 @@ class BybitPublicWS:
                 raise
             except Exception as e:  # noqa: BLE001
                 self.stats["reconnects"] += 1
-                await self.out.put(StatusEvent(idx, f"disconnected: {type(e).__name__}: {e}", now_ms()))
-                log.warning("ws[%d] %s: %s; reconnect in %.0fs", idx, type(e).__name__, e, backoff)
+                detail = ""
+                if connected_at is not None:
+                    now_m = time.monotonic()
+                    detail = (f" (соединение прожило {now_m - connected_at:.0f} с, последнее сообщение "
+                              f"{now_m - self._last_msg_mono.get(idx, now_m):.1f} с назад, "
+                              f"сообщений {self.stats['messages'] - msgs_at_connect})")
+                await self.out.put(StatusEvent(idx, f"disconnected: {type(e).__name__}: {e}{detail}", now_ms()))
+                log.warning("ws[%d] %s: %s%s; reconnect in %.0fs", idx, type(e).__name__, e, detail, backoff)
+                new_url = self.after_disconnect(idx, None if connected_at is None else time.monotonic() - connected_at)
+                if new_url:
+                    msg = f"частые обрывы или ошибки подключения к {url}, переключаюсь на {new_url}"
+                    log.warning("ws[%d] %s", idx, msg)
+                    await self.out.put(StatusEvent(idx, msg, now_ms()))
+                    backoff = 1.0
             if self._stop.is_set():
                 break
             await asyncio.sleep(backoff)
@@ -172,4 +250,8 @@ class BybitPublicWS:
                     await self.out.put(StatusEvent(idx, f"subscribe failed: {msg.get('ret_msg')}", now_ms()))
                 continue
             self.stats["last_msg_ts"] = int(time.time() * 1000)
-            await self.out.put(ev)
+            if isinstance(ev, list):
+                for e in ev:
+                    await self.out.put(e)
+            else:
+                await self.out.put(ev)

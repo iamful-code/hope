@@ -21,6 +21,10 @@ class ExchangeCfg(BaseModel):
     category: str = "linear"
     rest_url: str = "https://api.bybit.com"
     ws_url: str = "wss://stream.bybit.com/v5/public/linear"
+    # запасные адреса WebSocket при частых обрывах; None — stream.bytick.com (второй домен Bybit), [] — без запасных
+    ws_fallback_urls: list[str] | None = None
+    # прокси для WebSocket: auto — системный/из окружения (как у браузера), none — напрямую, или URL http://host:port
+    ws_proxy: str = "auto"
     orderbook_depth: int = 1
     topics_per_connection: int = 200
     args_per_subscribe: int = 50

@@ -76,6 +76,8 @@ class EngineCore(Context):
         self.cfg = cfg
         self.catalog = catalog
         self.candles_only = False  # бэктест по свечам: сделки не обрабатываются, свечи приходят KlineEvent
+        # live-стратегия берёт свечи из kline биржи (подписка kline включается в live.py)
+        self.kline_candles = mode == "live" and bool(getattr(strategy, "candles_from_kline", False))
         self.strategy = strategy
         self.store = store
         self.mode = mode
@@ -256,7 +258,7 @@ class EngineCore(Context):
             st = self.sym.get(ev.symbol)
             if st is None or ev.interval != bybit_kline_interval(self.cfg.strategy.timeframe):
                 return
-            if not self.cfg.exchange.subscribe_trades or self.candles_only:  # свечи только из kline
+            if not self.cfg.exchange.subscribe_trades or self.candles_only or self.kline_candles:  # свечи из kline
                 closed = st.candles.on_kline(ev.candle)
                 if closed is not None:
                     self.strategy.on_candle(self, ev.symbol, closed)
@@ -322,7 +324,11 @@ class EngineCore(Context):
             self.pf.on_mark(symbol, t.price)
         if self.store and self.cfg.store.record_market:
             self.store.md_trade(t.ts, symbol, t.taker_side.value, t.price, t.qty)
-        closed = st.candles.on_trade(t)
+        if self.kline_candles:
+            st.candles.last_price = t.price
+            closed = None
+        else:
+            closed = st.candles.on_trade(t)
         self.strategy.on_trade(self, symbol, t)
         if closed is not None:
             self.strategy.on_candle(self, symbol, closed)
@@ -333,10 +339,11 @@ class EngineCore(Context):
         self.now = now
         self.broker.on_time(now)
         # закрытие свечей без сделок
-        for s, st in self.sym.items():
-            closed = st.candles.on_time(now)
-            if closed is not None:
-                self.strategy.on_candle(self, s, closed)
+        if not self.kline_candles:  # свечи из kline закрывает сама биржа (confirm=true)
+            for s, st in self.sym.items():
+                closed = st.candles.on_time(now)
+                if closed is not None:
+                    self.strategy.on_candle(self, s, closed)
         self._after_broker()
         self._process_markouts(now)
         self._process_funding(now)

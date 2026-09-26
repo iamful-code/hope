@@ -16,6 +16,10 @@ exchange:
   category: linear
   rest_url: https://api.bybit.com
   ws_url: wss://stream.bybit.com/v5/public/linear
+  # Запасные адреса при частых обрывах (движок переключается сам). Не задано — второй домен Bybit stream.bytick.com
+  # ws_fallback_urls: [wss://stream.bytick.com/v5/public/linear]
+  # Прокси для WebSocket: auto — системный прокси Windows / HTTPS_PROXY, none — напрямую, или http://host:port
+  ws_proxy: auto
   # Глубина стакана в подписке: 1 (10 мс), 50 (20 мс), 200/500 (100 мс)
   orderbook_depth: 1
   # Топиков на одно WebSocket-соединение и аргументов в одном subscribe
