@@ -1,0 +1,45 @@
+# E0V1EN (Freqtrade, 5m, только лонг) в движке hope через адаптер FreqtradeStrategy.
+# Live:     hope run -c strategies/ft_e0v1en/config.yaml
+# Бэктест:  hope backtest -c strategies/ft_e0v1en/config.yaml --mode candles --from 2026-09-17 --to 2026-09-25
+# Настоящий Freqtrade (dry-run на Bybit, нужен REST): см. adapters/freqtrade/README.md, FT_STRATEGY=E0V1EN
+run:
+  name: ft_e0v1en
+
+exchange:
+  category: linear
+  orderbook_depth: 1
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, LINKUSDT, AVAXUSDT, DOTUSDT, LTCUSDT,
+            BCHUSDT, NEARUSDT, SUIUSDT, TONUSDT, 1000PEPEUSDT]
+
+fees:
+  maker: 0.0002
+  taker: 0.00055
+
+paper:
+  latency_ms: 60
+  initial_equity_usd: 10000.0
+  taker_slippage_bps: 1.0
+
+risk:
+  max_daily_loss_usd: 500.0
+  max_gross_notional_usd: 6000.0
+  max_position_notional_usd: 600.0
+  max_open_orders_per_symbol: 2
+
+strategy:
+  class: hope.adapters.freqtrade.runner:FreqtradeStrategy
+  timeframe: 5m
+  # 300 свечей startup (24h_change_pct) + запас
+  history_bars: 600
+  timer_ms: 1000
+  params:
+    strategy_path: strategies/ft_e0v1en/E0V1EN.py
+    class_name: E0V1EN
+    stake_amount_usd: 100.0
+    max_open_trades: 5
+    fee: 0.00055
+    check_secs: 5
+    leverage: 1.0
+
+backtest:
+  taker_slippage_bps: 1.0
