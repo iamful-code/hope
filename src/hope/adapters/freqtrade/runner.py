@@ -112,7 +112,10 @@ class FreqtradeStrategy(Strategy):
             "stake_amount": float(self.p("stake_amount_usd")),
             "max_open_trades": int(self.p("max_open_trades")),
             "dry_run": True,
-            "runmode": RunMode.BACKTEST if ctx.mode != "live" else RunMode.DRY_RUN,
+            # всегда DRY_RUN: в режимах backtest/hyperopt DataProvider.get_analyzed_dataframe отдаёт пустой
+            # DataFrame без выставленного slice-индекса, и custom_exit/custom_stoploss стратегий «слепнут».
+            # Lookahead исключён и так: кэшируется только история закрытых свечей.
+            "runmode": RunMode.DRY_RUN,
             "trading_mode": "futures" if category != "spot" else "spot",
             "margin_mode": "isolated" if category != "spot" else "",
             "candle_type_def": self.candle_type,
