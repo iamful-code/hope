@@ -23,6 +23,7 @@ from ..analytics import summary as _summary
 from ..store.db import connect_readonly
 
 CACHE_TTL_RUNNING = 3.0  # с, для запусков со status=running
+STALE_SECS = 90.0  # нет снимков equity дольше — live-запуск считается умершим (status=stale)
 CACHE_TTL_FINISHED = 60.0  # с, для завершённых (данные уже не меняются)
 CACHE_MAX_ITEMS = 64
 
@@ -215,6 +216,12 @@ class DbSet:
                 d["n_positions"] = int(le["n_positions"]) if le else 0
                 d["max_drawdown"] = float(le["max_drawdown"]) if le else 0.0
                 d["last_equity_ts"] = int(le["ts"]) if le else None
+                # живой запуск без снимков equity дольше STALE_SECS — процесс, скорее всего, умер (SIGKILL, сбой хоста)
+                if d["live"] and r.get("mode") == "live":
+                    last = int(le["ts"]) if le else int(r["started_ts"])
+                    if time.time() * 1000 - last > STALE_SECS * 1000:
+                        d["live"] = False
+                        d["status"] = "stale"
                 end = r.get("finished_ts") or (le["ts"] if le else None) or r.get("started_ts")
                 d["duration_secs"] = max(0.0, (int(end) - int(r["started_ts"])) / 1000.0) if end else 0.0
                 runs.append(d)
