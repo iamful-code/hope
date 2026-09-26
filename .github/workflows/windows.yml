@@ -38,7 +38,7 @@ jobs:
 
       - name: check live run in the database
         shell: cmd
-        run: .venv\Scripts\python -c "import sqlite3, json; r = sqlite3.connect('data/hope.db').execute('select run_id, strategy, status, summary_json from runs order by run_id desc limit 1').fetchone(); s = json.loads(r[3] or '{}'); print('run', r[0], r[1], r[2], 'events', s.get('n_events'), 'fills', s.get('n_fills'), 'ws', s.get('ws')); assert r[2] == 'finished', r[2]; print('::warning::no market data received from Bybit WebSocket' if (s.get('n_events') or 0) < 50 else 'market data OK')"
+        run: .venv\Scripts\python -c "import sqlite3, json; r = sqlite3.connect('data/hope.db').execute('select run_id, strategy, status, summary_json from runs order by run_id desc limit 1').fetchone(); s = json.loads(r[3] or '{}'); print('run', r[0], r[1], r[2], 'events', s.get('n_events'), 'fills', s.get('n_fills'), 'ws', s.get('ws')); assert r[2] == 'finished', r[2]; assert (s.get('n_events') or 0) >= 50, 'no market data from Bybit WebSocket'; print('market data OK')"
 
       - name: monitor (windows\monitor.cmd)
         shell: pwsh
