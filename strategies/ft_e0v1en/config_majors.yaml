@@ -1,17 +1,16 @@
 # E0V1EN (Freqtrade, 5m, только лонг) в движке hope через адаптер FreqtradeStrategy.
-# Live:     hope run -c strategies/ft_e0v1en/config.yaml
-# Бэктест:  hope backtest -c strategies/ft_e0v1en/config.yaml --mode candles --from 2026-09-17 --to 2026-09-25
+# Live:     hope run -c strategies/ft_e0v1en/config_majors.yaml   (Windows: windows\start.cmd -c strategies\ft_e0v1en\config_majors.yaml)
+# Бэктест:  hope backtest -c strategies/ft_e0v1en/config_majors.yaml --mode candles --from 2026-09-17 --to 2026-09-25
 # Настоящий Freqtrade (dry-run на Bybit, нужен REST): см. adapters/freqtrade/README.md, FT_STRATEGY=E0V1EN
 run:
-  name: ft_e0v1en
+  name: ft_e0v1en_majors
 
 exchange:
   category: linear
   orderbook_depth: 1
-  # Волатильные альты — набор, на котором стратегия делала сделки в бэктесте 2026-09-17…25 (на крупных монетах
-  # за тот же период не было ни одного входа). Список СТАТИЧНЫЙ: выбран вручную, проверен 2026-09-26 (все торгуются),
-  # автоматического пересчёта по волатильности нет. Прежний набор крупных монет — в config_majors.yaml.
-  symbols: [1000PEPEUSDT, SUIUSDT, WIFUSDT, WLDUSDT, ASTERUSDT, PUMPFUNUSDT, 1000BONKUSDT, MOODENGUSDT, TRUMPUSDT]
+  # Крупные ликвидные монеты (статичный список). На истории 2026-09-17…25 стратегия не сделала здесь ни одного входа.
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, LINKUSDT, AVAXUSDT, DOTUSDT, LTCUSDT,
+            BCHUSDT, NEARUSDT, SUIUSDT, 1000PEPEUSDT]
 
 fees:
   maker: 0.0002
