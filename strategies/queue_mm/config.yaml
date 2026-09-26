@@ -1,0 +1,122 @@
+# Стратегия queue_mm: мейкерский сбор спреда с учётом очереди (порт hftbacktest B9 на движок hope).
+# Накладывается поверх config/base.yaml. Запуск:  hope run -c strategies/queue_mm/config.yaml
+#                                        Бэктест: hope backtest -c strategies/queue_mm/config.yaml --from ... --to ...
+run:
+  name: queue_mm
+
+exchange:
+  category: linear
+  orderbook_depth: 1
+  # Кандидаты: ликвидные USDT-перпетуалы Bybit с шагом цены >= 1 б.п. (по сканеру `hope scan`, 2026-09-26).
+  # Стратегия сама выбирает активный набор по медиане спреда, потоку сделок и волатильности.
+  symbols:
+    - OKTAUSDT
+    - LONGXIAUSDT
+    - GRAMUSDT
+    - SNXXUSDT
+    - ATOMUSDT
+    - PLUMEUSDT
+    - RENDERUSDT
+    - TRUMPUSDT
+    - KORUUSDT
+    - XLMUSDT
+    - GALAUSDT
+    - SPKUSDT
+    - WIFUSDT
+    - ADAUSDT
+    - PENDLEUSDT
+    - EIGENUSDT
+    - MONUSDT
+    - STONKUSDT
+    - MORPHOUSDT
+    - CAKEUSDT
+    - WAVESUSDT
+    - ICPUSDT
+    - BIOUSDT
+    - SOXSUSDT
+    - BCHUSDT
+    - TRXUSDT
+    - JUPUSDT
+    - CRVUSDT
+    - STXUSDT
+    - METUSDT
+    - KAITOUSDT
+    - 1000BONKUSDT
+    - STRKUSDT
+    - KASUSDT
+    - 1000PEPEUSDT
+    - LYNUSDT
+    - PUMPFUNUSDT
+    - SPXUSDT
+    - WLDUSDT
+    - NEARUSDT
+    - TIAUSDT
+    - LITUSDT
+    - CHIPUSDT
+    - LDOUSDT
+    - MOODENGUSDT
+    - GRASSUSDT
+    - ONDOUSDT
+    - WLFIUSDT
+    - JTOUSDT
+    - SHIB1000USDT
+    - DRAMUSDT
+    - DASHUSDT
+    - PONSUSDT
+    - XAGUSDT
+    - ETHFIUSDT
+    - MNTUSDT
+    - SEIUSDT
+    - ASTERUSDT
+    - 2ZUSDT
+    - LTCUSDT
+
+fees:
+  maker: 0.0002
+  taker: 0.00055
+
+paper:
+  latency_ms: 60
+  initial_equity_usd: 10000.0
+  apply_funding: true
+
+risk:
+  max_daily_loss_usd: 200.0
+  max_gross_notional_usd: 4000.0
+  max_position_notional_usd: 300.0
+  max_open_orders_per_symbol: 4
+
+store:
+  snapshot_secs: 5
+
+strategy:
+  class: strategies/queue_mm/strategy.py:QueueMM
+  timeframe: 1m
+  history_bars: 200
+  timer_ms: 500
+  params:
+    min_spread_bps: 6.0
+    quote_mode: join
+    order_notional_usd: 100.0
+    max_position_notional_usd: 300.0
+    skew_ticks: 1.0
+    use_microprice: true
+    min_requote_ms: 300
+    max_order_age_ms: 20000
+    max_expected_fill_secs: 90.0
+    depletion_cancel_ratio: 0.3
+    toxicity_imbalance: 0.6
+    toxicity_window_secs: 10
+    max_vol_bps: 25.0
+    max_hold_secs: 120
+    stale_taker_secs: 60
+    min_turnover_24h_usd: 3000000.0
+    min_trades_per_min: 2.0
+    min_spread_med_bps: 5.0
+    min_spread_vol_ratio: 0.5
+    max_active_symbols: 20
+    refresh_secs: 15
+    warmup_secs: 60
+
+backtest:
+  taker_slippage_bps: 1.0
