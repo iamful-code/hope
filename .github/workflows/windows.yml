@@ -17,6 +17,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
+        id: py311
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -69,8 +74,10 @@ jobs:
           call windows\autostart.cmd off
           if exist "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\hope-lab.cmd" exit /b 1
 
-      - name: Cyrillic path with spaces, like C:\Users\<Cyrillic name>\hope
+      - name: Cyrillic path with spaces, like C:\Users\<Cyrillic name>\hope (Python 3.11)
         shell: pwsh
+        env:
+          HOPE_PYTHON: ${{ steps.py311.outputs.python-path }}
         run: |
           $cyr = -join (0x0410,0x0434,0x043C,0x0438,0x043D,0x0438,0x0441,0x0442,0x0440,0x0430,0x0442,0x043E,0x0440 | ForEach-Object { [char]$_ })
           $dst = Join-Path $env:USERPROFILE "$cyr\my lab\hope"
@@ -79,11 +86,13 @@ jobs:
           Set-Location $dst
           Write-Host "repository copy: $dst"
 
-          # 1) reproduce the reported bug: an editable install is not importable from such a path on Python 3.11/3.12
-          python -m venv .venv-editable
+          # 1) reproduce the reported bug on Python 3.11: an editable install is not importable from such a path
+          & $env:HOPE_PYTHON --version
+          & $env:HOPE_PYTHON -m venv .venv-editable
           .\.venv-editable\Scripts\python -m pip install -q --disable-pip-version-check --no-deps -e .
-          .\.venv-editable\Scripts\python -c "import hope" 2>$null
-          Write-Host "editable install importable: $($LASTEXITCODE -eq 0)"
+          Get-ChildItem .venv-editable\Lib\site-packages\*.pth | ForEach-Object { Write-Host "$($_.Name): $([System.BitConverter]::ToString([System.IO.File]::ReadAllBytes($_.FullName)))" }
+          .\.venv-editable\Scripts\python -c "import hope" 2>&1 | Select-Object -Last 1 | Write-Host
+          Write-Host "editable install importable on 3.11: $($LASTEXITCODE -eq 0)"
           Remove-Item -Recurse -Force .venv-editable
 
           # 2) windows\install.cmd (regular install) and the usual commands from this folder
