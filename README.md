@@ -28,7 +28,11 @@
 | `hope.engine` | `Strategy` API + `Context`; `LiveEngine` (WS) и `BacktestEngine` (архив) на одном ядре; markout-аналитика исполнений |
 | `hope.store` | SQLite (WAL), отдельный поток-писатель; схема `runs/orders/fills/equity/positions/symbol_stats/metrics/events/markouts` |
 | `hope.monitor` / `hope.analytics` | Веб-монитор (только чтение БД): equity, просадка, круги (FIFO), markout, PnL по символам/часам/тегам, сравнение запусков |
+| `hope.engine.replay` | Реплей записанных BBO/сделок другого запуска (`store.record_market: true`) — честная очередь для мейкерских стратегий |
+| `hope.adapters.freqtrade` | Запуск стратегий Freqtrade (IStrategy без изменений) в движке hope + экспорт результатов настоящего Freqtrade в общую БД |
+| `adapters/freqtrade/` | docker-compose с настоящим Freqtrade (dry-run на Bybit) + экспортёр + монитор |
 | `strategies/` | Тестируемые стратегии (каждая — своя ветка `strategy/<имя>`) |
+| `docs/` | Каталог публичных стратегий с оценкой (`strategy_catalog.md`), проверка фреймворков (`frameworks.md`) |
 
 ### Модель бумажного исполнения
 
@@ -67,13 +71,27 @@ docker compose logs -f engine
 ## Команды
 
 ```bash
-hope run -c strategies/<имя>/config.yaml [--duration N] [--name ...] [--set section.key=value]
-hope backtest -c strategies/<имя>/config.yaml --from 2026-09-01 --to 2026-09-07 [--db data/bt.db] [--queue-usd 20000]
+hope run -c strategies/<имя>/config.yaml [--duration N] [--name ...] [--warmup 300] [--set section.key=value]
+hope backtest -c strategies/<имя>/config.yaml --from 2026-09-01 --to 2026-09-07 [--mode trades|candles] [--db data/bt.db]
+hope replay -c strategies/<имя>/config.yaml --source-run <run_id> [--source-db data/hope.db]   # по записанному потоку
 hope download -s BTCUSDT,ETHUSDT --from 2026-09-01 --to 2026-09-07
 hope scan --duration 30 --min-turnover 5000000 [--min-tick-bps 5] [--out scan.csv]
-hope monitor --db data/hope.db --port 8000
+hope monitor --db data/hope.db[,data/bt.db] --port 8000
 hope instruments            # обновить кэш инструментов через REST
+hope ft-export --url http://127.0.0.1:8080 --user ... --password ...   # результаты настоящего Freqtrade -> общая БД
 ```
+
+Режимы бэктеста: `trades` — каждая сделка архива, BBO-прокси и очередь (тиковые и мейкерские стратегии);
+`candles` — свечи таймфрейма, BBO = close ± полтика, быстро (свечные стратегии с рыночными ордерами).
+Перед live-запуском движок подгружает `strategy.history_bars` закрытых свечей: с REST, а если он недоступен —
+из архива сделок за предыдущие дни (с разрывом до суток).
+
+### Три способа проверить стратегию
+
+1. **Бэктест-фильтр** (`hope backtest`) — архив сделок Bybit, минуты на неделю истории.
+2. **Реплей** (`hope replay`) — записанный живой поток с объёмами на лучших уровнях; для мейкерских стратегий
+   это единственный честный офлайн-тест.
+3. **Live paper** (`hope run`) — главный критерий; результаты в мониторе в реальном времени.
 
 Конфигурация: `config/base.yaml` → `strategies/<имя>/config.yaml` → переменные `HOPE__section__key` → `--set`.
 
@@ -105,11 +123,21 @@ class MyStrategy(Strategy):
 `close_position(sym)`, `qty_for_notional(...)`, `metric(name, value, sym)` (попадает в монитор), `event(msg)`.
 Один и тот же класс работает в live и в бэктесте.
 
+## Стратегии Freqtrade
+
+Файл стратегии Freqtrade кладётся в `strategies/<имя>/` без изменений и запускается адаптером
+(`strategy.class: hope.adapters.freqtrade.runner:FreqtradeStrategy`, см. `strategies/ft_*/config.yaml` на ветках
+`strategy/ft-*`). Сигналы считает сам класс стратегии, выходы (ROI, стоп-лосс, trailing, custom_stoploss,
+custom_exit) — штатный `IStrategy.should_exit` Freqtrade. Нужен extra: `uv pip install -e ".[freqtrade]"`
+(в Docker — `HOPE_EXTRAS=freqtrade` в `.env`). Для запуска в настоящем Freqtrade (dry-run на Bybit, FreqUI) —
+`adapters/freqtrade/`; его сделки попадают в тот же монитор через `hope ft-export`.
+
 ## Ветки
 
 * `claude/keen-knuth-rvy3au` — платформа (эта ветка).
 * `strategy/<имя>` — одна тестируемая стратегия: движок/адаптер, конфиг, README с логикой, источником,
   результатами бэктест-фильтра и критериями «рабочести».
+* Порядок перебора и оценка кандидатов — `docs/strategy_catalog.md`.
 
 ## Критерии «рабочей» стратегии (по умолчанию)
 

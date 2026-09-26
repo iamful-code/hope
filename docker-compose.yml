@@ -3,7 +3,10 @@
 # монитор — ту же БД в томе ./data. Монитор: http://localhost:8000
 services:
   engine:
-    build: .
+    build:
+      context: .
+      args:
+        EXTRAS: ${HOPE_EXTRAS:-}
     container_name: hope-engine
     restart: unless-stopped
     command: ["run", "--config", "${STRATEGY_CONFIG:-strategies/current/config.yaml}"]
@@ -19,7 +22,10 @@ services:
       options: { max-size: "50m", max-file: "5" }
 
   monitor:
-    build: .
+    build:
+      context: .
+      args:
+        EXTRAS: ${HOPE_EXTRAS:-}
     container_name: hope-monitor
     restart: unless-stopped
     command: ["monitor", "--db", "/app/data/hope.db", "--host", "0.0.0.0", "--port", "8000"]

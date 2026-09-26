@@ -75,6 +75,7 @@ class EngineCore(Context):
                  catalog: "InstrumentCatalog | None" = None) -> None:
         self.cfg = cfg
         self.catalog = catalog
+        self.candles_only = False  # бэктест по свечам: сделки не обрабатываются, свечи приходят KlineEvent
         self.strategy = strategy
         self.store = store
         self.mode = mode
@@ -255,7 +256,7 @@ class EngineCore(Context):
             st = self.sym.get(ev.symbol)
             if st is None or ev.interval != bybit_kline_interval(self.cfg.strategy.timeframe):
                 return
-            if not self.cfg.exchange.subscribe_trades:  # свечи только из kline, если сделок нет
+            if not self.cfg.exchange.subscribe_trades or self.candles_only:  # свечи только из kline
                 closed = st.candles.on_kline(ev.candle)
                 if closed is not None:
                     self.strategy.on_candle(self, ev.symbol, closed)

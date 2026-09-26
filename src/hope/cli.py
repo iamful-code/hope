@@ -46,6 +46,7 @@ def run(
     symbols: str = typer.Option(None, "--symbols", "-s", help="Список символов через запятую"),
     duration: float = typer.Option(None, "--duration", help="Остановиться через N секунд"),
     name: str = typer.Option(None, "--name", help="Имя запуска"),
+    warmup: int = typer.Option(None, "--warmup", help="Свечей прогрева (по умолчанию strategy.history_bars; 0 = без прогрева)"),
     set_: list[str] = typer.Option(None, "--set", help="Переопределить ключ: section.key=value"),
     verbose: bool = typer.Option(False, "-v"),
 ) -> None:
@@ -54,7 +55,7 @@ def run(
     from .engine.live import run_live
 
     cfg = _load(config, symbols, set_)
-    asyncio.run(run_live(cfg, duration, name))
+    asyncio.run(run_live(cfg, duration, name, warmup))
 
 
 @app.command()
@@ -67,6 +68,7 @@ def backtest(
     queue_usd: float = typer.Option(20_000.0, "--queue-usd", help="Оценка очереди впереди лимитного ордера, USDT"),
     funding: float = typer.Option(0.0001, "--funding", help="Ставка фандинга за 8ч в бэктесте"),
     db: str = typer.Option(None, "--db", help="Путь к БД результатов (по умолчанию store.db_path)"),
+    mode: str = typer.Option("trades", "--mode", help="trades (каждая сделка, очередь) | candles (быстро, по свечам)"),
     set_: list[str] = typer.Option(None, "--set"),
     verbose: bool = typer.Option(False, "-v"),
 ) -> None:
@@ -75,7 +77,8 @@ def backtest(
     from .engine.backtest import run_backtest
 
     cfg = _load(config, symbols, set_)
-    summary = asyncio.run(run_backtest(cfg, from_, to, name, queue_usd, funding, db))
+    summary = asyncio.run(run_backtest(cfg, from_, to, name, queue_usd, funding, db, mode=mode))
+    summary.pop("instruments", None)
     typer.echo(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
 
 
