@@ -4,7 +4,7 @@ rem hope: install into .venv next to the repository (needs 64-bit Python 3.11+).
 rem Usage:  windows\install.cmd [extras]
 rem   extras - optional pip extras, e.g. freqtrade or dev. HOPE_EXTRAS from .env
 rem            is added automatically (strategy/ft-* branches set it to freqtrade).
-rem Safe to run again: updates the installation after "git pull".
+rem Run it again after "git pull" or after switching branches: it refreshes the installation.
 rem ---------------------------------------------------------------------------
 setlocal EnableExtensions
 title hope - install
@@ -49,10 +49,19 @@ if not "%~1"=="" if not defined EXTRAS set "EXTRAS=%~1"
 set "SPEC=."
 if defined EXTRAS set "SPEC=.[%EXTRAS%]"
 
-echo [hope] pip install -e "%SPEC%" - this takes a few minutes the first time ...
+rem Regular (not editable) install: "pip install -e" writes the source path into a .pth file
+rem in UTF-8, while Python 3.11/3.12 on Windows read .pth files in the ANSI code page, so a
+rem repository under a Cyrillic user folder becomes unimportable. The price: after
+rem "git pull" run install.cmd again to refresh the installed copy of hope.
+echo [hope] pip install "%SPEC%" - this takes a few minutes the first time ...
 "%HOPE_PY%" -m pip install --disable-pip-version-check --upgrade pip
 if errorlevel 1 goto :fail
-"%HOPE_PY%" -m pip install --disable-pip-version-check -e "%SPEC%"
+"%HOPE_PY%" -m pip install --disable-pip-version-check "%SPEC%"
+if errorlevel 1 goto :fail
+rem same version number after "git pull" - force pip to replace hope itself (dependencies stay)
+"%HOPE_PY%" -m pip install --disable-pip-version-check --no-deps --force-reinstall .
+if errorlevel 1 goto :fail
+"%HOPE_PY%" -c "import hope.cli"
 if errorlevel 1 goto :fail
 "%HOPE_EXE%" --help >nul
 if errorlevel 1 goto :fail

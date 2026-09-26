@@ -68,3 +68,43 @@ jobs:
           type "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\hope-lab.cmd"
           call windows\autostart.cmd off
           if exist "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\hope-lab.cmd" exit /b 1
+
+      - name: Cyrillic path with spaces, like C:\Users\<Cyrillic name>\hope
+        shell: pwsh
+        run: |
+          $cyr = -join (0x0410,0x0434,0x043C,0x0438,0x043D,0x0438,0x0441,0x0442,0x0440,0x0430,0x0442,0x043E,0x0440 | ForEach-Object { [char]$_ })
+          $dst = Join-Path $env:USERPROFILE "$cyr\my lab\hope"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Get-ChildItem -Force -Path . -Exclude .venv, data, .git | Copy-Item -Destination $dst -Recurse -Force
+          Set-Location $dst
+          Write-Host "repository copy: $dst"
+
+          # 1) reproduce the reported bug: an editable install is not importable from such a path on Python 3.11/3.12
+          python -m venv .venv-editable
+          .\.venv-editable\Scripts\python -m pip install -q --disable-pip-version-check --no-deps -e .
+          .\.venv-editable\Scripts\python -c "import hope" 2>$null
+          Write-Host "editable install importable: $($LASTEXITCODE -eq 0)"
+          Remove-Item -Recurse -Force .venv-editable
+
+          # 2) windows\install.cmd (regular install) and the usual commands from this folder
+          cmd /c "call windows\install.cmd dev"
+          if ($LASTEXITCODE) { throw "install.cmd failed in $dst" }
+          cmd /c "call windows\backtest.cmd -c strategies\example_ema\config.yaml -s LINKUSDT --from 2026-09-24 --to 2026-09-24 --mode candles --db data\bt_cyr.db"
+          if ($LASTEXITCODE) { throw "backtest.cmd failed" }
+          cmd /c "call windows\run.cmd -c strategies\example_ema\config.yaml --duration 30 --warmup 0"
+          if ($LASTEXITCODE) { throw "run.cmd failed" }
+          .\.venv\Scripts\python -c "import sqlite3, json; r = sqlite3.connect('data/hope.db').execute('select status, summary_json from runs order by run_id desc limit 1').fetchone(); s = json.loads(r[1]); print('live run', r[0], 'events', s['n_events']); assert r[0] == 'finished' and s['n_events'] >= 50"
+          if ($LASTEXITCODE) { throw "live run in the Cyrillic path got no data" }
+
+          $p = Start-Process -FilePath cmd.exe -ArgumentList "/c", "call windows\monitor.cmd --port 8010" -WorkingDirectory $dst -PassThru -WindowStyle Hidden
+          $ok = $false
+          for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
+            Start-Sleep -Seconds 2
+            try { $r = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8010/api/runs; $ok = $r.StatusCode -eq 200 } catch {}
+          }
+          if (-not $ok) { throw "monitor did not start in the Cyrillic path" }
+          $runs = ($r.Content | ConvertFrom-Json).runs
+          $runs | Select-Object id, name, mode, status, n_fills | Format-Table | Out-String | Write-Host
+          if ($runs.Count -lt 1) { throw "monitor sees no runs in the Cyrillic path" }
+          (Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8010/api/runs/$($runs[0].id)/summary").StatusCode
+          Get-CimInstance Win32_Process -Filter "Name='hope.exe'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
