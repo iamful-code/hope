@@ -193,5 +193,45 @@ def scan(
     asyncio.run(go())
 
 
+@app.command("ft-export")
+def ft_export(
+    url: str = typer.Option("http://127.0.0.1:8080", "--url", help="Адрес REST API Freqtrade"),
+    user: str = typer.Option(None, "--user", envvar="FT_API_USER", help="api_server.username (или env FT_API_USER)"),
+    password: str = typer.Option(None, "--password", envvar="FT_API_PASSWORD", help="api_server.password (или env FT_API_PASSWORD)"),
+    db: str = typer.Option("data/hope.db", "--db", help="БД результатов hope"),
+    interval: float = typer.Option(10.0, "--interval", help="Период опроса API, с"),
+    name: str = typer.Option(None, "--name", help="Имя запуска (по умолчанию ft:<стратегия>:<bot_name>)"),
+    state: str = typer.Option(None, "--state", help="Файл состояния экспортёра (по умолчанию <db>.ftexport.json)"),
+    once: bool = typer.Option(False, "--once", help="Один опрос и выход (запуск не завершается)"),
+    verbose: bool = typer.Option(False, "-v"),
+) -> None:
+    """Экспорт сделок работающего Freqtrade (REST API) в БД hope как запуск engine=freqtrade; до Ctrl-C."""
+    _setup_logging(verbose)
+    import signal
+
+    from .adapters.freqtrade.exporter import FreqtradeExporter
+
+    exp = FreqtradeExporter(url, user, password, db, run_name=name, interval_secs=interval, state_path=state)
+
+    async def go():
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop.set)
+            except (NotImplementedError, RuntimeError):
+                pass  # Windows / не главный поток: остановка по KeyboardInterrupt ниже
+        await exp.run(stop, once=once)
+
+    try:
+        asyncio.run(go())
+    except KeyboardInterrupt:
+        exp.finish("stopped")
+    finally:
+        exp.close()
+    if once:
+        typer.echo(json.dumps(exp.summary(), ensure_ascii=False))
+
+
 if __name__ == "__main__":
     app()
