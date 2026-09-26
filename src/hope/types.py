@@ -65,8 +65,8 @@ class SymbolMeta:
         return int(round(price / self.tick_size))
 
     def ticks_to_price(self, ticks: int) -> float:
-        scale = 10 ** self.price_scale
-        return round(ticks * self.tick_size * scale) / scale
+        # округление до 10 знаков убирает float-шум при любом шаге цены (min тик на Bybit 1e-8)
+        return round(ticks * self.tick_size, 10)
 
     def round_price(self, price: float) -> float:
         return self.ticks_to_price(self.price_to_ticks(price))

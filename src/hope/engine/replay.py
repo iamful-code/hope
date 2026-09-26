@@ -12,7 +12,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from ..bybit.instruments import InstrumentCatalog
+from ..bybit.instruments import InstrumentCatalog, _decimals_of
 from ..config import Config
 from ..store.db import Store, connect_readonly
 from ..types import Bbo, BboEvent, Side, Trade, TradesEvent
@@ -55,6 +55,8 @@ async def run_replay(cfg: Config, source_db: str, source_run_id: int, run_name: 
             m.tick_size = float(inst[s]["tick_size"])
             m.qty_step = float(inst[s]["qty_step"])
             m.min_qty = m.qty_step
+            m.price_scale = int(inst[s].get("price_scale") or _decimals_of(m.tick_size))
+            m.min_notional = float(inst[s].get("min_notional") or m.min_notional)
             m.source = "inferred"
 
     strategy = load_strategy_class(cfg.strategy.class_path)(cfg.strategy.params)

@@ -420,7 +420,8 @@ class EngineCore(Context):
                 "rejections": self.rejections,
                 "kill_switch": self.risk.killed,
                 "instruments": {
-                    s: {"tick_size": st.meta.tick_size, "qty_step": st.meta.qty_step, "source": st.meta.source}
+                    s: {"tick_size": st.meta.tick_size, "qty_step": st.meta.qty_step, "price_scale": st.meta.price_scale,
+                        "min_notional": st.meta.min_notional, "source": st.meta.source}
                     for s, st in self.sym.items()
                 },
             }
