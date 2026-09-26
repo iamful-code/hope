@@ -9,7 +9,7 @@ exchange:
   category: linear
   orderbook_depth: 1
   symbols: [BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, LINKUSDT, AVAXUSDT, DOTUSDT, LTCUSDT,
-            BCHUSDT, NEARUSDT, SUIUSDT, TONUSDT, 1000PEPEUSDT]
+            BCHUSDT, NEARUSDT, SUIUSDT, 1000PEPEUSDT]
 
 fees:
   maker: 0.0002
