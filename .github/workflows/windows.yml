@@ -65,6 +65,27 @@ jobs:
           if ($page.Content -notmatch "hope") { throw "dashboard page is wrong" }
           Get-CimInstance Win32_Process -Filter "Name='hope.exe'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
+      - name: start.cmd - first run, second run with the monitor already up, wrong extra text
+        shell: pwsh
+        run: |
+          function Stop-Hope { Get-CimInstance Win32_Process | Where-Object { $_.Name -in 'hope.exe','python.exe' -and $_.CommandLine -match 'hope' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
+          Stop-Hope; Start-Sleep -Seconds 2
+          cmd /c "call windows\start.cmd --duration 15 --warmup 0"
+          if ($LASTEXITCODE) { throw "start.cmd failed: $LASTEXITCODE" }
+          $up = $false
+          for ($i = 0; $i -lt 30 -and -not $up; $i++) { try { $up = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/api/runs).StatusCode -eq 200 } catch { Start-Sleep -Seconds 1 } }
+          if (-not $up) { throw "start.cmd did not start the monitor" }
+          $out = cmd /c "call windows\start.cmd --duration 10 --warmup 0" 2>&1 | Out-String
+          $rc = $LASTEXITCODE; Write-Host $out
+          if ($rc) { throw "second start.cmd failed: $rc" }
+          if ($out -notmatch 'already running') { throw "second start.cmd did not reuse the running monitor" }
+          $out = cmd /c "call windows\start.cmd  - engine + monitor" 2>&1 | Out-String
+          $rc = $LASTEXITCODE; Write-Host $out
+          if ($rc -ne 2) { throw "expected exit code 2 for extra text, got $rc" }
+          if ($out -notmatch 'without extra text') { throw "no hint for extra text" }
+          Stop-Hope
+          exit 0
+
       - name: autostart on/off (windows\autostart.cmd)
         shell: cmd
         run: |

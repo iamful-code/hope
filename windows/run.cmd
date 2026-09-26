@@ -16,6 +16,11 @@ if not exist "%HOPE_EXE%" goto :not_installed
 echo [hope] engine: default strategy config %STRATEGY_CONFIG%, stop with Ctrl+C
 "%HOPE_EXE%" run --restart %*
 set "RC=%ERRORLEVEL%"
+if not "%RC%"=="2" goto :end
+echo.
+echo [hope] The engine did not start: extra text or unknown options were passed, see "Error" above.
+echo        Run the script without extra text:   windows\run.cmd
+echo        Engine options are listed by: .venv\Scripts\hope.exe run --help
 goto :end
 
 :not_installed

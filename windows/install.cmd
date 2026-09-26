@@ -71,9 +71,12 @@ if errorlevel 1 goto :fail
 if not exist "data" mkdir "data"
 
 echo.
-echo [hope] installed.
-echo        strategy config from .env: %STRATEGY_CONFIG%
-echo        next step: windows\start.cmd  - engine + monitor in the browser
+echo [hope] installed. Strategy config from .env: %STRATEGY_CONFIG%
+echo.
+echo [hope] Next step - start the engine and the monitor with this command:
+echo.
+echo     windows\start.cmd
+echo.
 goto :end
 
 :py32
