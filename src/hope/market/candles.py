@@ -136,10 +136,22 @@ class CandleBuilder:
             return self._close_current()
         return None
 
+    # сколько пропущенных свечей подряд дорисовывать плоскими (обрыв WebSocket ровно на закрытии свечи);
+    # большие разрывы (например, между прогревом из архива и живыми данными) не заполняются
+    MAX_KLINE_GAP_FILL = 5
+
     def on_kline(self, c: Candle) -> Candle | None:
         """Принять готовую свечу (топик kline или история свечей). Закрытые добавляются в серию."""
         if c.closed:
-            if len(self.series) == 0 or c.ts_open > self.series.column("ts_open")[-1]:
+            last = int(self.series.column("ts_open")[-1]) if len(self.series) else None
+            if last is None or c.ts_open > last:
+                if last is not None:
+                    missing = (c.ts_open - last) // self.tf_ms - 1
+                    if 0 < missing <= self.MAX_KLINE_GAP_FILL:
+                        px = float(self.series.column("close")[-1])
+                        for k in range(1, missing + 1):
+                            t = last + k * self.tf_ms
+                            self.series.append(Candle(t, t + self.tf_ms, px, px, px, px, closed=True))
                 self.series.append(c)
                 self.current = None
                 self.last_price = c.close
