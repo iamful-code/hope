@@ -12,8 +12,11 @@ set "RC=0"
 call "%~dp0_env.cmd" || goto :fail
 echo [hope] repository: %HOPE_ROOT%
 
-rem --- find Python: py launcher first (3.12, 3.11, 3.13, 3.14), then python on PATH
+rem --- find Python: HOPE_PYTHON if set (e.g. py -3.11 or a full path to python.exe without spaces),
+rem     then the py launcher (3.12, 3.11, 3.13, 3.14), then python on PATH
 set "PYEXE="
+if defined HOPE_PYTHON set "PYEXE=%HOPE_PYTHON%"
+if defined PYEXE goto :have_python
 where py >nul 2>nul
 if errorlevel 1 goto :try_python
 for %%V in (3.12 3.11 3.13 3.14) do if not defined PYEXE py -%%V -c "import sys" >nul 2>nul && set "PYEXE=py -%%V"
