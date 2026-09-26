@@ -1,0 +1,14 @@
+# Пример: пересечение EMA на закрытых 1m-свечах (встроенная hope.strategies.examples:EmaCross).
+# Нужен только для проверки стенда; прибыльности не ожидается (тейкерные входы, комиссии 0.11 % за круг).
+run:
+  name: example_ema
+exchange:
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+strategy:
+  class: hope.strategies.examples:EmaCross
+  timeframe: 1m
+  params:
+    fast: 9
+    slow: 21
+    notional_usd: 200.0
+    allow_short: true

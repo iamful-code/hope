@@ -87,6 +87,7 @@ class BybitPublicWS:
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
         self.stats = {"messages": 0, "reconnects": 0, "last_msg_ts": 0}
+        self._last_msg_mono: dict[int, float] = {}
         self._ssl = _ssl_context() if url.startswith("wss") else None
 
     def subscribe(self, topics: list[str]) -> None:
@@ -101,7 +102,10 @@ class BybitPublicWS:
         finally:
             for t in self._tasks:
                 t.cancel()
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+            try:
+                await asyncio.wait_for(asyncio.gather(*self._tasks, return_exceptions=True), timeout=10)
+            except asyncio.TimeoutError:
+                log.warning("не все соединения закрылись за 10 с")
 
     def stop(self) -> None:
         self._stop.set()
@@ -117,9 +121,18 @@ class BybitPublicWS:
                     for i in range(0, len(topics), self.args_per_subscribe):
                         await ws.send(json.dumps({"op": "subscribe", "req_id": f"{idx}-{i}", "args": topics[i : i + self.args_per_subscribe]}))
                     backoff = 1.0
-                    pinger = asyncio.create_task(self._pinger(ws))
+                    self._last_msg_mono[idx] = time.monotonic()
+                    pinger = asyncio.create_task(self._pinger(idx, ws))
                     try:
                         await self._reader(idx, ws)
+                    except asyncio.CancelledError:
+                        # остановка: рвём транспорт сразу, без close-handshake (он может зависнуть за прокси
+                        # при большом входящем потоке и остановленном потребителе)
+                        try:
+                            ws.transport.abort()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        raise
                     finally:
                         pinger.cancel()
             except asyncio.CancelledError:
@@ -133,18 +146,20 @@ class BybitPublicWS:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
 
-    async def _pinger(self, ws) -> None:
+    async def _pinger(self, idx: int, ws) -> None:
+        """Ping раз в 20 с и сторожевой таймер: нет сообщений 60 с — рвём соединение (реконнект)."""
         while True:
             await asyncio.sleep(self.PING_SECS)
+            if time.monotonic() - self._last_msg_mono.get(idx, 0.0) > self.PING_SECS * 3:
+                log.warning("ws[%d]: нет сообщений %d с, переподключение", idx, self.PING_SECS * 3)
+                ws.transport.abort()
+                return
             await ws.send(json.dumps({"op": "ping"}))
 
     async def _reader(self, idx: int, ws) -> None:
-        last = time.monotonic()
         while True:
-            try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=self.PING_SECS * 3)
-            except asyncio.TimeoutError as e:
-                raise ConnectionError("нет сообщений 60 с") from e
+            raw = await ws.recv()
+            self._last_msg_mono[idx] = time.monotonic()
             self.stats["messages"] += 1
             try:
                 ev = parse_message(raw)
@@ -158,4 +173,3 @@ class BybitPublicWS:
                 continue
             self.stats["last_msg_ts"] = int(time.time() * 1000)
             await self.out.put(ev)
-            last = time.monotonic()

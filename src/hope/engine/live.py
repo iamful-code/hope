@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import subprocess
 from pathlib import Path
@@ -60,7 +61,8 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
     )
     log.info("run_id=%d db=%s", run_id, cfg.store.db_path)
 
-    core = EngineCore(cfg, strategy, store, "live", {s: catalog.get(s) for s in symbols}, symbols, use_book=True)
+    core = EngineCore(cfg, strategy, store, "live", {s: catalog.get(s) for s in symbols}, symbols, use_book=True,
+                      catalog=catalog)
     q: asyncio.Queue = asyncio.Queue(maxsize=100_000)
     ws = BybitPublicWS(cfg.exchange.ws_url, q, cfg.exchange.topics_per_connection, cfg.exchange.args_per_subscribe)
     depth = strategy.orderbook_depth or cfg.exchange.orderbook_depth
@@ -87,6 +89,7 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
 
     ws_task = asyncio.create_task(ws.run(), name="ws")
     status = "finished"
+    zombie = False
     core.start(now_ms())
     store.event(core.now, "info", f"старт live: {len(symbols)} символов, {len(topics)} топиков, инструменты={src}")
     tick_every = 0.1
@@ -115,12 +118,29 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
         store.event(now_ms(), "error", f"движок упал: {type(e).__name__}: {e}")
         raise
     finally:
+        log.info("остановка: закрываю WebSocket ...")
         ws.stop()
-        await asyncio.gather(ws_task, return_exceptions=True)
+        try:
+            await asyncio.wait_for(asyncio.gather(ws_task, return_exceptions=True), timeout=15)
+        except asyncio.TimeoutError:
+            zombie = True
+            log.warning("WebSocket не закрылся за 15 с, продолжаю остановку")
+            for t in asyncio.all_tasks():
+                if t is asyncio.current_task():
+                    continue
+                frames = t.get_stack(limit=4)
+                where = " <- ".join(f"{f.f_code.co_name}:{f.f_lineno}" for f in frames)
+                log.warning("зависшая задача %s done=%s: %s", t.get_name(), t.done(), where)
+        log.info("остановка: стратегия и итоговые снимки ...")
         core.stop(now_ms())
         summary = core.summary()
         summary["ws"] = ws.stats
         store.finish_run(status, summary)
         store.close()
+        log.info("остановка: БД закрыта")
         log.info("итог: %s", {k: (round(v, 4) if isinstance(v, float) else v) for k, v in summary.items()})
+        if zombie:
+            # зависшие сетевые задачи не дадут asyncio.run() завершиться — выходим жёстко, всё уже записано
+            logging.shutdown()
+            os._exit(0)
     return summary

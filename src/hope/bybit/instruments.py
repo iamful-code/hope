@@ -33,7 +33,7 @@ class InstrumentCatalog:
         self.metas: dict[str, SymbolMeta] = {}
         self._price_dec: dict[str, int] = {}
         self._qty_dec: dict[str, int] = {}
-        self._samples: dict[str, int] = {}
+        self._prices: dict[str, set[float]] = {}
         self.turnover: dict[str, float] = {}
 
     # ---------------------------------------------------------------- загрузка
@@ -97,19 +97,35 @@ class InstrumentCatalog:
         return [m.symbol for m in cands[: max_symbols or None]]
 
     # ---------------------------------------------------------------- вывод из потока
-    def observe_price(self, symbol: str, *prices: float) -> None:
+    def observe_price(self, symbol: str, *prices: float) -> bool:
+        """Уточнить шаг цены по наблюдённым ценам. Возвращает True, если tick_size изменился.
+
+        Знаки после запятой дают верхнюю границу точности (price_scale), а минимальная
+        разность между различными ценами — оценку самого шага (у BTCUSDT scale=2, tick=0.1)."""
         m = self.metas.get(symbol)
         if m is None or m.source in ("rest", "cache"):
-            return
+            return False
+        seen = self._prices.setdefault(symbol, set())
         d = self._price_dec.get(symbol, 0)
         for p in prices:
             if p > 0:
                 d = max(d, _decimals_of(p))
-        if d != self._price_dec.get(symbol) or m.source == "default":
-            self._price_dec[symbol] = d
-            m.tick_size = 10.0 ** (-d)
-            m.price_scale = d
-            m.source = "inferred"
+                if len(seen) < 400:
+                    seen.add(round(p, 10))
+        old_tick = m.tick_size
+        self._price_dec[symbol] = d
+        m.price_scale = d
+        tick = 10.0 ** (-d)
+        if len(seen) >= 20:
+            ps = sorted(seen)
+            md = min((b - a for a, b in zip(ps, ps[1:]) if b - a > 0), default=tick)
+            # шаг — степень десяти или её кратное (0.1, 0.5, 0.25): округляем к 10^-d кратному
+            md = round(md, d)
+            if md > 0:
+                tick = md
+        m.tick_size = tick
+        m.source = "inferred"
+        return abs(tick - old_tick) > 1e-15
 
     def observe_qty(self, symbol: str, *qtys: float) -> None:
         m = self.metas.get(symbol)

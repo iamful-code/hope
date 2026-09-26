@@ -134,5 +134,40 @@ def instruments(
     asyncio.run(go())
 
 
+@app.command()
+def scan(
+    duration: float = typer.Option(30.0, "--duration", help="Сколько секунд слушать тикеры"),
+    min_turnover: float = typer.Option(5_000_000.0, "--min-turnover", help="Мин. оборот за 24ч, USDT"),
+    min_tick_bps: float = typer.Option(0.0, "--min-tick-bps", help="Показать только символы с шагом цены >= N б.п."),
+    category: str = typer.Option("linear", "--category"),
+    ws_url: str = typer.Option("wss://stream.bybit.com/v5/public/linear", "--ws-url"),
+    limit: int = typer.Option(60, "--limit"),
+    out: str = typer.Option(None, "--out", help="Сохранить полную таблицу в CSV"),
+) -> None:
+    """Сканер символов по WebSocket (без REST): оборот, шаг цены в б.п., спред, фандинг."""
+    _setup_logging(False)
+    from .bybit.scan import archive_symbols, scan as _scan
+
+    async def go():
+        syms = await archive_symbols(category)
+        typer.echo(f"кандидатов из архива: {len(syms)}; слушаю тикеры {duration:.0f} с ...")
+        rows = await _scan(syms, ws_url, duration)
+        rows = [r for r in rows if r.turnover_24h >= min_turnover and r.tick_bps >= min_tick_bps]
+        typer.echo(f"{'symbol':14s} {'last':>12s} {'turnover24h,M':>14s} {'tick,bps':>9s} {'spread,bps':>11s} {'funding':>9s} {'OI,M':>8s}")
+        for r in rows[:limit]:
+            typer.echo(f"{r.symbol:14s} {r.last:12.6g} {r.turnover_24h/1e6:14.1f} {r.tick_bps:9.2f} {r.spread_bps:11.2f} {r.funding_rate:9.5f} {r.open_interest_value/1e6:8.1f}")
+        if out:
+            import csv
+
+            with open(out, "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["symbol", "last", "turnover_24h", "tick_bps", "spread_bps", "tick_est", "funding_rate", "open_interest_value", "n"])
+                for r in rows:
+                    w.writerow([r.symbol, r.last, r.turnover_24h, round(r.tick_bps, 3), round(r.spread_bps, 3), r.tick_est, r.funding_rate, r.open_interest_value, r.n])
+            typer.echo(f"сохранено: {out}")
+
+    asyncio.run(go())
+
+
 if __name__ == "__main__":
     app()

@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..bybit.instruments import InstrumentCatalog, _decimals_of
 from ..config import Config
 from ..market.book import OrderBook
 from ..market.candles import CandleBuilder, CandleSeries
@@ -70,8 +71,10 @@ class _PendingMarkout:
 
 class EngineCore(Context):
     def __init__(self, cfg: Config, strategy: Strategy, store: Store | None, mode: str, metas: dict[str, SymbolMeta],
-                 symbols: list[str], use_book: bool = True, taker_slippage_bps: float | None = None) -> None:
+                 symbols: list[str], use_book: bool = True, taker_slippage_bps: float | None = None,
+                 catalog: "InstrumentCatalog | None" = None) -> None:
         self.cfg = cfg
+        self.catalog = catalog
         self.strategy = strategy
         self.store = store
         self.mode = mode
@@ -277,15 +280,21 @@ class EngineCore(Context):
         self._after_broker()
 
     def _infer_price_scale(self, st: SymbolState, ev: BookEvent) -> None:
-        from ..bybit.instruments import _decimals_of
-
-        d = max((_decimals_of(p) for p, _ in (ev.bids[:3] + ev.asks[:3])), default=0)
-        if d > st.meta.price_scale or st.meta.source == "default":
-            st.meta.price_scale = max(d, st.meta.price_scale if st.meta.source != "default" else 0)
-            st.meta.tick_size = 10.0 ** (-st.meta.price_scale)
-            st.meta.source = "inferred"
-            if st.book is not None:
-                st.book.clear()
+        """Каталог не знает символ: уточняем шаг цены по потоку; при смене шага стакан пересобирается."""
+        if self.catalog is None:
+            d = max((_decimals_of(p) for p, _ in (ev.bids[:3] + ev.asks[:3])), default=0)
+            if d > st.meta.price_scale or st.meta.source == "default":
+                st.meta.price_scale = max(d, st.meta.price_scale if st.meta.source != "default" else 0)
+                st.meta.tick_size = 10.0 ** (-st.meta.price_scale)
+                st.meta.source = "inferred"
+                if st.book is not None:
+                    st.book.clear()
+            return
+        prices = [p for p, _ in ev.bids[:5]] + [p for p, _ in ev.asks[:5]]
+        if self.catalog.observe_price(ev.symbol, *prices) and st.book is not None:
+            st.book.clear()
+            if not ev.snapshot:
+                st.book.dirty = True  # дельта без снимка: BBO пересчитается на следующем snapshot
 
     def _on_bbo(self, st: SymbolState, symbol: str, bbo: Bbo) -> None:
         st.bbo = bbo
@@ -299,12 +308,12 @@ class EngineCore(Context):
 
     def _on_trade(self, st: SymbolState, symbol: str, t: Trade) -> None:
         if st.meta.source in ("default", "inferred"):
-            from ..bybit.instruments import _decimals_of
-
             d = _decimals_of(t.qty)
-            if d > 0 and 10.0 ** (-d) < st.meta.qty_step:
+            if 10.0 ** (-d) < st.meta.qty_step:
                 st.meta.qty_step = 10.0 ** (-d)
                 st.meta.min_qty = st.meta.qty_step
+            if self.catalog is not None:
+                self.catalog.observe_price(symbol, t.price)
         st.last_trade_ts = t.ts
         self.broker.on_trade(self.now, symbol, t)
         st.stats.on_trade(t)
@@ -410,6 +419,10 @@ class EngineCore(Context):
                 "n_events": self.n_events,
                 "rejections": self.rejections,
                 "kill_switch": self.risk.killed,
+                "instruments": {
+                    s: {"tick_size": st.meta.tick_size, "qty_step": st.meta.qty_step, "source": st.meta.source}
+                    for s, st in self.sym.items()
+                },
             }
         )
         return snap

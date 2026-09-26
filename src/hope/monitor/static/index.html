@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hope · монитор</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">hope · монитор</span>
+  <select id="runSelect" title="Запуск"></select>
+  <span id="modeBadge" class="badge hidden"></span>
+  <span id="liveBadge" class="badge live hidden">live</span>
+  <label class="toggle" title="Периодически перечитывать данные выбранного запуска">
+    <input type="checkbox" id="autoRefresh"> автообновление
+    <select id="refreshMs">
+      <option value="2000">2 с</option>
+      <option value="3000" selected>3 с</option>
+      <option value="5000">5 с</option>
+      <option value="10000">10 с</option>
+      <option value="30000">30 с</option>
+    </select>
+  </label>
+  <button id="refreshNow" title="Обновить сейчас">Обновить</button>
+  <span class="spacer"></span>
+  <span id="lastUpdate" class="muted"></span>
+  <span id="dbLabel" class="muted mono"></span>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="overview" class="active">Обзор</button>
+  <button data-tab="symbols">Символы</button>
+  <button data-tab="trades">Сделки</button>
+  <button data-tab="orders">Ордера</button>
+  <button data-tab="markout">Markout</button>
+  <button data-tab="metrics">Метрики</button>
+  <button data-tab="events">События</button>
+  <button data-tab="compare">Сравнение</button>
+</nav>
+
+<main id="main">
+  <!-- ================= Обзор -->
+  <section id="tab-overview" class="tab active">
+    <div class="kpis" id="kpis"></div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>Equity и просадка <span class="muted">(время UTC)</span></h3>
+        <div id="equityChart" class="chart tall"></div>
+      </div>
+      <div>
+        <div class="card">
+          <h3>Вердикт</h3>
+          <ul id="verdict" class="verdict"></ul>
+          <div id="verdictTotal" class="verdict-total"></div>
+        </div>
+        <div class="card">
+          <h3>Запуск</h3>
+          <dl class="info" id="runInfo"></dl>
+          <pre class="params mono" id="runParams"></pre>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Открытые позиции</h3>
+      <div id="positionsTable"></div>
+    </div>
+  </section>
+
+  <!-- ================= Символы -->
+  <section id="tab-symbols" class="tab">
+    <div class="grid-2 even">
+      <div class="card">
+        <h3>Чистый PnL по символам (раунд-трипы)</h3>
+        <div id="symbolsChart" class="chart short"></div>
+      </div>
+      <div class="card">
+        <h3>Рынок сейчас: спред / волатильность / поток</h3>
+        <div id="symbolsMarketChart" class="chart short"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Таблица по символам</h3>
+      <div id="symbolsTable"></div>
+    </div>
+  </section>
+
+  <!-- ================= Сделки -->
+  <section id="tab-trades" class="tab">
+    <div class="controls">
+      <label>Символ</label>
+      <select id="tradesSymbol"><option value="">все</option></select>
+      <label>Раунд-трипов в таблице</label>
+      <select id="rtLimit">
+        <option value="100">100</option>
+        <option value="500" selected>500</option>
+        <option value="2000">2000</option>
+      </select>
+    </div>
+    <div class="grid-2 even">
+      <div class="card">
+        <h3>Накопленный чистый PnL по раунд-трипам</h3>
+        <div id="cumPnlChart" class="chart short"></div>
+      </div>
+      <div class="card">
+        <h3>Распределение PnL раунд-трипа</h3>
+        <div id="pnlHistChart" class="chart short"></div>
+      </div>
+    </div>
+    <div class="grid-2 even">
+      <div class="card">
+        <h3>PnL по часу суток (UTC, закрытие)</h3>
+        <div id="pnlHourChart" class="chart short"></div>
+      </div>
+      <div class="card">
+        <h3>PnL по тегу входа</h3>
+        <div id="pnlTagChart" class="chart short"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Раунд-трипы <span id="rtCount" class="muted"></span></h3>
+      <div id="rtTable"></div>
+    </div>
+    <div class="card">
+      <h3>Исполнения <span id="fillsCount" class="muted"></span></h3>
+      <div id="fillsTable"></div>
+      <div class="pager">
+        <button id="fillsPrev">← назад</button>
+        <span id="fillsPage" class="muted"></span>
+        <button id="fillsNext">вперёд →</button>
+        <label>на странице</label>
+        <select id="fillsPageSize">
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+          <option value="250">250</option>
+        </select>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Ордера -->
+  <section id="tab-orders" class="tab">
+    <div class="kpis" id="ordersKpis"></div>
+    <div class="grid-2 even">
+      <div class="card">
+        <h3>Статусы ордеров по назначению</h3>
+        <div id="ordersStatusChart" class="chart short"></div>
+      </div>
+      <div class="card">
+        <h3>Доля исполненных лимитных ордеров vs очередь впереди</h3>
+        <div id="ordersQueueChart" class="chart short"></div>
+        <div class="legend-note">Корзины по квантилям queue_ahead_initial; высота — доля полностью исполненных, подпись — доля объёма.</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Последние ордера</h3>
+      <div id="ordersTable"></div>
+    </div>
+  </section>
+
+  <!-- ================= Markout -->
+  <section id="tab-markout" class="tab">
+    <div class="grid-2 even">
+      <div class="card">
+        <h3>Средний markout по горизонту, б.п. <span id="markoutN" class="muted"></span></h3>
+        <div id="markoutChart" class="chart short"></div>
+      </div>
+      <div class="card">
+        <h3>Maker vs taker</h3>
+        <div id="markoutMakerChart" class="chart short"></div>
+      </div>
+    </div>
+    <div class="grid-2 even">
+      <div class="card">
+        <h3>По назначению ордера (entry / exit / ...)</h3>
+        <div id="markoutPurposeChart" class="chart short"></div>
+      </div>
+      <div class="card">
+        <h3>По стороне и символу</h3>
+        <div id="markoutSideChart" class="chart short"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Таблица</h3>
+      <div id="markoutTable"></div>
+    </div>
+  </section>
+
+  <!-- ================= Метрики -->
+  <section id="tab-metrics" class="tab">
+    <div class="controls">
+      <label>Метрика</label>
+      <select id="metricName"></select>
+      <label>Символ</label>
+      <select id="metricSymbol"><option value="">все</option></select>
+      <label>Точек (макс.)</label>
+      <select id="metricPoints">
+        <option value="2000">2000</option>
+        <option value="5000" selected>5000</option>
+        <option value="20000">20000</option>
+      </select>
+    </div>
+    <div class="card">
+      <h3 id="metricTitle">Метрика</h3>
+      <div id="metricChart" class="chart tall"></div>
+    </div>
+    <div class="card">
+      <h3>Доступные метрики</h3>
+      <div id="metricsList"></div>
+    </div>
+  </section>
+
+  <!-- ================= События -->
+  <section id="tab-events" class="tab">
+    <div class="controls">
+      <label>Уровень</label>
+      <select id="eventLevel"><option value="">все</option></select>
+      <label>Строк</label>
+      <select id="eventLimit">
+        <option value="200" selected>200</option>
+        <option value="1000">1000</option>
+        <option value="5000">5000</option>
+      </select>
+    </div>
+    <div class="card">
+      <h3>Журнал <span id="eventsCount" class="muted"></span></h3>
+      <div id="eventsTable"></div>
+    </div>
+  </section>
+
+  <!-- ================= Сравнение -->
+  <section id="tab-compare" class="tab">
+    <div class="card">
+      <h3>Запуски для сравнения</h3>
+      <div class="checks" id="compareChecks"></div>
+      <div class="controls">
+        <button id="compareGo" class="primary">Сравнить</button>
+        <label>Ось X</label>
+        <select id="compareX">
+          <option value="t">от старта (часы)</option>
+          <option value="ts">время UTC</option>
+        </select>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Доходность, % от начального капитала</h3>
+      <div id="compareChart" class="chart tall"></div>
+    </div>
+    <div class="card">
+      <h3>Сводная таблица</h3>
+      <div id="compareTable"></div>
+    </div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
