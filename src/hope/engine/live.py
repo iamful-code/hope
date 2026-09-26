@@ -161,14 +161,17 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
         и биржа рвёт соединение); раз в минуту пишем сводку потока в лог и в БД."""
         last_report = loop.time()
         msgs0 = ws.stats["messages"]
+        t_prev = loop.time()
         while True:
-            t0 = loop.time()
             await asyncio.sleep(0.5)
-            lag = loop.time() - t0 - 0.5
+            # от прошлого замера, а не от начала sleep: так в задержку попадает и остановка на записи сводки ниже
+            now = loop.time()
+            lag, t_prev = now - t_prev - 0.5, now
             health["lag_max"] = max(health["lag_max"], lag)
             health["queue_max"] = max(health["queue_max"], q.qsize())
             if lag > 2.0:
-                log.warning("цикл событий был занят %.1f с: обработка не успевает за потоком (очередь %d)", lag, q.qsize())
+                log.warning("движок стоял %.1f с и не читал поток с биржи (очередь %d): долгий расчёт стратегии, "
+                            "нехватка CPU или пауза процесса (сон ПК)", lag, q.qsize())
             if loop.time() - last_report >= 60:
                 dt = loop.time() - last_report
                 rate = (ws.stats["messages"] - msgs0) / dt
@@ -242,6 +245,9 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
         log.info("итог: %s", {k: (round(v, 4) if isinstance(v, float) else v) for k, v in summary.items()})
         if zombie:
             # зависшие сетевые задачи не дадут asyncio.run() завершиться — выходим жёстко, всё уже записано
+            from ..logutil import stop_logging
+
+            stop_logging()
             logging.shutdown()
             os._exit(0)
     return summary
