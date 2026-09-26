@@ -74,6 +74,9 @@ class Strategy:
     # какие подписки нужны движку (live): стакан всегда; сделки нужны для свечей и paper-исполнения
     needs_trades: bool = True
     needs_kline: bool = False
+    # live: закрытые свечи брать из топика kline биржи, а не собирать из сделок (устойчиво к потере сделок при
+    # переподключении WebSocket). В бэктесте и реплее свечи по-прежнему строятся из сделок.
+    candles_from_kline: bool = False
     needs_tickers: bool = True
     orderbook_depth: int | None = None  # None = из конфига
 
