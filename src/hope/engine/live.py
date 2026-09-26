@@ -90,7 +90,18 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
     if warm:
         log.info("прогрев: %s", ", ".join(f"{s}:{len(cs)}" for s, cs in list(warm.items())[:8]) + (" ..." if len(warm) > 8 else ""))
     q: asyncio.Queue = asyncio.Queue(maxsize=100_000)
-    ws = BybitPublicWS(cfg.exchange.ws_url, q, cfg.exchange.topics_per_connection, cfg.exchange.args_per_subscribe)
+    fallbacks = cfg.exchange.ws_fallback_urls
+    if fallbacks is None:
+        alt = cfg.exchange.ws_url.replace("stream.bybit.com", "stream.bytick.com")
+        fallbacks = [alt] if alt != cfg.exchange.ws_url else []
+    ws = BybitPublicWS(cfg.exchange.ws_url, q, cfg.exchange.topics_per_connection, cfg.exchange.args_per_subscribe,
+                       fallback_urls=fallbacks, proxy=cfg.exchange.ws_proxy)
+    proxy = ws.proxy_in_use()
+    if proxy:
+        msg = (f"WebSocket к Bybit идёт через прокси {proxy} (системные настройки Windows или HTTPS_PROXY). "
+               f"Если соединение часто рвётся, попробуйте напрямую: HOPE__exchange__ws_proxy=none в .env")
+        log.warning(msg)
+        store.event(now_ms(), "warn", msg)
     depth = strategy.orderbook_depth or cfg.exchange.orderbook_depth
     topics: list[str] = []
     for s in symbols:
@@ -143,6 +154,34 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
 
     ws_task = asyncio.create_task(ws.run(), name="ws")
     store.event(now_ms(), "info", f"старт live: {len(symbols)} символов, {len(topics)} топиков, инструменты={src}")
+    health = {"lag_max": 0.0, "queue_max": 0, "lag_total_max": 0.0, "queue_total_max": 0}
+
+    async def _health() -> None:
+        """Раз в 0.5 с меряем задержку цикла событий (если обработка блокирует цикл, WebSocket не читается,
+        и биржа рвёт соединение); раз в минуту пишем сводку потока в лог и в БД."""
+        last_report = loop.time()
+        msgs0 = ws.stats["messages"]
+        while True:
+            t0 = loop.time()
+            await asyncio.sleep(0.5)
+            lag = loop.time() - t0 - 0.5
+            health["lag_max"] = max(health["lag_max"], lag)
+            health["queue_max"] = max(health["queue_max"], q.qsize())
+            if lag > 2.0:
+                log.warning("цикл событий был занят %.1f с: обработка не успевает за потоком (очередь %d)", lag, q.qsize())
+            if loop.time() - last_report >= 60:
+                dt = loop.time() - last_report
+                rate = (ws.stats["messages"] - msgs0) / dt
+                msg = (f"поток: {rate:.0f} сообщ/с, очередь max {health['queue_max']}, задержка цикла max "
+                       f"{health['lag_max']:.2f} с, переподключений всего {ws.stats['reconnects']}")
+                log.info(msg)
+                store.event(now_ms(), "info", msg)
+                health["lag_total_max"] = max(health["lag_total_max"], health["lag_max"])
+                health["queue_total_max"] = max(health["queue_total_max"], health["queue_max"])
+                health["lag_max"], health["queue_max"] = 0.0, 0
+                last_report, msgs0 = loop.time(), ws.stats["messages"]
+
+    health_task = asyncio.create_task(_health(), name="health")
     tick_every = 0.1
     next_tick = loop.time()
     try:
@@ -173,6 +212,7 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
         raise
     finally:
         log.info("остановка: закрываю WebSocket ...")
+        health_task.cancel()
         ws.stop()
         try:
             await asyncio.wait_for(asyncio.gather(ws_task, return_exceptions=True), timeout=15)
@@ -194,6 +234,8 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
         core.stop(now_ms())
         summary = core.summary()
         summary["ws"] = ws.stats
+        summary["loop_lag_max_s"] = round(max(health["lag_total_max"], health["lag_max"]), 3)
+        summary["queue_max"] = max(health["queue_total_max"], health["queue_max"])
         store.finish_run(status, summary)
         store.close()
         log.info("остановка: БД закрыта")
