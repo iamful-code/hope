@@ -50,15 +50,7 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
             await rest.close()
             raise RuntimeError("список символов пуст: задайте exchange.symbols или откройте доступ к REST для автоотбора")
     log.info("символы (%d): %s", len(symbols), ", ".join(symbols[:20]) + (" ..." if len(symbols) > 20 else ""))
-    # прогрев свечей (если стратегии нужна история)
-    warm: dict[str, list] = {}
-    if warmup_bars > 0:
-        from .warmup import warmup_candles
-
-        warm = await warmup_candles(symbols, cfg.strategy.timeframe, warmup_bars, rest if src == "rest" else None,
-                                    cfg.exchange.category, data_dir, now_ms())
-    await rest.close()
-
+    # запись о запуске создаётся до прогрева: монитор сразу видит запуск и прогресс загрузки истории
     store = Store(cfg.store.db_path)
     run_id = store.start_run(
         name=run_name or cfg.run.name or strategy.name,
@@ -71,6 +63,24 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
         branch=git_branch(),
     )
     log.info("run_id=%d db=%s", run_id, cfg.store.db_path)
+    store.event(now_ms(), "info", f"подготовка: {len(symbols)} символов, инструменты={src}")
+
+    # прогрев свечей (если стратегии нужна история)
+    warm: dict[str, list] = {}
+    if warmup_bars > 0:
+        from .warmup import warmup_candles
+
+        try:
+            warm = await warmup_candles(symbols, cfg.strategy.timeframe, warmup_bars, rest if src == "rest" else None,
+                                        cfg.exchange.category, data_dir, now_ms(),
+                                        notify=lambda m: store.event(now_ms(), "info", m))
+        except BaseException as e:
+            store.event(now_ms(), "error", f"прогрев прерван: {type(e).__name__}: {e}")
+            store.finish_run("crashed" if isinstance(e, Exception) else "stopped", {})
+            store.close()
+            await rest.close()
+            raise
+    await rest.close()
 
     core = EngineCore(cfg, strategy, store, "live", {s: catalog.get(s) for s in symbols}, symbols, use_book=True,
                       catalog=catalog)

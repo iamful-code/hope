@@ -23,7 +23,7 @@ from ..analytics import summary as _summary
 from ..store.db import connect_readonly
 
 CACHE_TTL_RUNNING = 3.0  # с, для запусков со status=running
-STALE_SECS = 90.0  # нет снимков equity дольше — live-запуск считается умершим (status=stale)
+STALE_SECS = 300.0  # нет снимков equity и событий дольше — live-запуск считается умершим (status=stale)
 CACHE_TTL_FINISHED = 60.0  # с, для завершённых (данные уже не меняются)
 CACHE_MAX_ITEMS = 64
 
@@ -201,6 +201,9 @@ class DbSet:
                 n_fills = {
                     r["run_id"]: r["n"] for r in self.query_rows(i, "SELECT run_id, COUNT(*) AS n FROM fills GROUP BY run_id")
                 }
+                last_ev = {
+                    r["run_id"]: r["ts"] for r in self.query_rows(i, "SELECT run_id, MAX(ts) AS ts FROM events GROUP BY run_id")
+                }
             except Exception as e:  # noqa: BLE001
                 info.ok, info.error = False, str(e)
                 continue
@@ -216,9 +219,11 @@ class DbSet:
                 d["n_positions"] = int(le["n_positions"]) if le else 0
                 d["max_drawdown"] = float(le["max_drawdown"]) if le else 0.0
                 d["last_equity_ts"] = int(le["ts"]) if le else None
-                # живой запуск без снимков equity дольше STALE_SECS — процесс, скорее всего, умер (SIGKILL, сбой хоста)
+                # живой запуск без снимков equity и событий дольше STALE_SECS — процесс, скорее всего, умер
+                # (SIGKILL, сбой хоста). События пишутся и во время прогрева истории, до первых снимков equity.
                 if d["live"] and r.get("mode") == "live":
-                    last = int(le["ts"]) if le else int(r["started_ts"])
+                    last = max(int(le["ts"]) if le else 0, int(last_ev.get(r["run_id"]) or 0), int(r["started_ts"]))
+                    d["last_activity_ts"] = last
                     if time.time() * 1000 - last > STALE_SECS * 1000:
                         d["live"] = False
                         d["status"] = "stale"

@@ -156,7 +156,8 @@ async function loadRuns(keepSelection) {
     state.runs.forEach((r, i) => { const o = sel.options[i]; if (o) o.textContent = runLabel(r); });
   }
   el('dbLabel').textContent = data.dbs.map((d) => d.path + (d.ok ? '' : ' (недоступна)')).join(', ');
-  if (!state.runs.length) { toast('В БД нет запусков'); return; }
+  setEmpty(!state.runs.length, data.dbs);
+  if (!state.runs.length) { waitForRuns(); return; }
   let pick = prev && state.runs.find((r) => runKey(r) === prev);
   if (!pick) pick = state.runs.find((r) => r.status === 'running') || state.runs[0];
   sel.value = runKey(pick);
@@ -164,6 +165,23 @@ async function loadRuns(keepSelection) {
   state.run = pick;
   updateHeader();
   if (changed) onRunChanged();
+}
+// Пока запусков нет — показываем подсказку вместо пустых панелей и опрашиваем список раз в 3 с:
+// как только движок создаст запуск, он выберется автоматически.
+function setEmpty(isEmpty, dbs) {
+  el('emptyState').classList.toggle('hidden', !isEmpty);
+  document.querySelectorAll('#main > section.tab').forEach((t) => t.classList.toggle('hidden', isEmpty));
+  el('tabs').classList.toggle('hidden', isEmpty);
+  if (isEmpty) el('emptyStateDb').textContent = 'База данных: ' + (dbs || []).map((d) => d.path).join(', ');
+}
+function waitForRuns() {
+  if (state.emptyTimer) return;
+  state.emptyTimer = setInterval(async () => {
+    try {
+      await loadRuns(false);
+      if (state.runs.length) { clearInterval(state.emptyTimer); state.emptyTimer = null; }
+    } catch (e) { /* монитор или БД ещё не готовы — попробуем позже */ }
+  }, 3000);
 }
 function updateHeader() {
   const r = state.run;

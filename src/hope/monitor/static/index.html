@@ -41,6 +41,17 @@
 </nav>
 
 <main id="main">
+  <!-- ================= Пусто: движок ещё не создал ни одного запуска -->
+  <section id="emptyState" class="card empty-state hidden">
+    <h3>Запусков пока нет</h3>
+    <p>Монитор только показывает результаты: сам он ничего не запускает. Запустите движок, и запуск появится здесь
+      через несколько секунд, страница обновится сама.</p>
+    <ul>
+      <li>Windows: <code>windows\start.cmd</code> (движок и монитор) или <code>windows\run.cmd</code> (только движок)</li>
+      <li>Linux: <code>hope run</code> или <code>docker compose up -d</code></li>
+    </ul>
+    <p class="muted" id="emptyStateDb"></p>
+  </section>
   <!-- ================= Обзор -->
   <section id="tab-overview" class="tab active">
     <div class="kpis" id="kpis"></div>
