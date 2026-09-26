@@ -46,18 +46,29 @@ class TradeHistory:
     def path(self, symbol: str, day: date) -> Path:
         return self.root / symbol / f"{day.isoformat()}.parquet"
 
-    async def ensure(self, symbols: list[str], from_: str | date, to: str | date, client: httpx.AsyncClient | None = None) -> list[tuple[str, date]]:
-        """Скачать недостающие дни. Возвращает список (symbol, day), которых нет в архиве."""
-        days = daterange(from_, to)
+    def pending(self, symbols: list[str], from_: str | date, to: str | date) -> list[tuple[str, date]]:
+        """Дни, которых ещё нет в локальном кэше (их придётся скачать)."""
+        return [(s, d) for s in symbols for d in daterange(from_, to) if not self.path(s, d).exists()]
+
+    async def ensure(self, symbols: list[str], from_: str | date, to: str | date, client: httpx.AsyncClient | None = None,
+                     progress=None) -> list[tuple[str, date]]:
+        """Скачать недостающие дни. Возвращает список (symbol, day), которых нет в архиве.
+        progress(done, total) вызывается после каждого файла."""
         own = client is None
         client = client or httpx.AsyncClient(timeout=120.0, follow_redirects=True)
         missing: list[tuple[str, date]] = []
         try:
-            tasks = [self._fetch(client, s, d) for s in symbols for d in days if not self.path(s, d).exists()]
-            for coro in asyncio.as_completed(tasks):
+            todo = self.pending(symbols, from_, to)
+            tasks = [self._fetch(client, s, d) for s, d in todo]
+            for i, coro in enumerate(asyncio.as_completed(tasks), 1):
                 res = await coro
                 if res is not None:
                     missing.append(res)
+                if progress is not None:
+                    try:
+                        progress(i, len(tasks))
+                    except Exception:  # noqa: BLE001
+                        pass
         finally:
             if own:
                 await client.aclose()

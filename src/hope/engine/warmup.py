@@ -16,7 +16,7 @@ log = logging.getLogger("hope.warmup")
 
 
 async def warmup_candles(symbols: list[str], timeframe: str, bars: int, rest: BybitRest | None, category: str,
-                         data_dir: str | Path, now_ms: int) -> dict[str, list[Candle]]:
+                         data_dir: str | Path, now_ms: int, notify=None) -> dict[str, list[Candle]]:
     """Вернуть до `bars` закрытых свечей на символ (по возрастанию времени)."""
     tf_ms = timeframe_ms(timeframe)
     out: dict[str, list[Candle]] = {}
@@ -40,8 +40,25 @@ async def warmup_candles(symbols: list[str], timeframe: str, bars: int, rest: By
         # окно прогрева короче суток, а архив за сегодня ещё не опубликован: берём хвост вчерашнего дня
         d_from = d_to
         start = 0
+    todo = hist.pending(symbols, d_from, d_to)
+    if todo:
+        msg = (f"прогрев: REST Bybit недоступен, качаю архив сделок public.bybit.com — {len(todo)} файлов "
+               f"({len(symbols)} символов × {len(todo) // max(len(symbols), 1) or 1} дн., обычно 10–80 МБ каждый). "
+               f"Первый раз это может занять несколько минут, дальше файлы берутся из data/history. "
+               f"Запуск без прогрева: --warmup 0 (стратегия начнёт торговать, когда накопит свечи вживую)")
+        log.warning(msg)
+        if notify:
+            notify(msg)
+
+    def _progress(done: int, total: int) -> None:
+        # в БД — каждый файл (монитор видит, что запуск жив), в консоль — каждые ~10 %
+        if notify:
+            notify(f"прогрев: скачано {done} из {total} файлов архива")
+        if done == total or done % max(total // 10, 1) == 0:
+            log.info("прогрев: скачано %d из %d файлов архива", done, total)
+
     try:
-        missing = await hist.ensure(symbols, d_from, d_to)
+        missing = await hist.ensure(symbols, d_from, d_to, progress=_progress)
     except Exception as e:  # noqa: BLE001
         log.warning("архив недоступен: %s", e)
         return out
