@@ -56,13 +56,16 @@ uv venv .venv && uv pip install -p .venv/bin/python -e ".[dev]"     # или: pi
 .venv/bin/python -m pytest -q
 ```
 
-Docker (движок + монитор, конфиг стратегии из `strategies/current/config.yaml`):
+Docker (движок + монитор, конфиг стратегии — `STRATEGY_CONFIG` в `.env`):
 
 ```bash
-cp .env.example .env            # STRATEGY_CONFIG, MONITOR_PORT
+cp .env.example .env            # STRATEGY_CONFIG, MONITOR_PORT, HOPE_EXTRAS
 docker compose up -d --build    # монитор: http://localhost:8000
 docker compose logs -f engine
 ```
+
+**Windows:** `windows\install.cmd`, затем `windows\start.cmd` — движок и монитор в браузере, без Docker.
+Подробно, включая Docker Desktop и автозапуск: [`docs/WINDOWS.md`](docs/WINDOWS.md).
 
 > Bybit блокирует запросы из США и ряда других стран (CloudFront 403). Публичный WebSocket при этом обычно
 > доступен, поэтому движок работает без REST: метаданные инструментов берутся из кэша или выводятся из потока.
@@ -94,6 +97,8 @@ hope ft-export --url http://127.0.0.1:8080 --user ... --password ...   # рез�
 3. **Live paper** (`hope run`) — главный критерий; результаты в мониторе в реальном времени.
 
 Конфигурация: `config/base.yaml` → `strategies/<имя>/config.yaml` → переменные `HOPE__section__key` → `--set`.
+Без `-c` команды `run`, `backtest`, `replay` берут конфиг стратегии из `STRATEGY_CONFIG`; `hope` сам читает `.env`
+из текущей папки. `hope run --restart` перезапускает движок после сбоя.
 
 ## Как написать стратегию
 

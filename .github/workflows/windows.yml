@@ -1,0 +1,70 @@
+# Проверка запуска под Windows: те же windows\*.cmd, что запускает пользователь.
+# Установка -> тесты -> бэктест по архиву Bybit -> live paper 90 с на публичном WebSocket -> монитор -> автозапуск.
+name: windows
+
+on:
+  push:
+    branches: ["claude/**", "strategy/**"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      HOPE_NO_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install (windows\install.cmd)
+        shell: cmd
+        run: call windows\install.cmd dev
+
+      - name: unit tests
+        shell: cmd
+        run: .venv\Scripts\python -m pytest -q
+
+      - name: backtest (windows\backtest.cmd)
+        shell: cmd
+        run: call windows\backtest.cmd -c strategies\example_ema\config.yaml -s LINKUSDT --from 2026-09-24 --to 2026-09-24 --mode candles --db data\bt_ci.db
+
+      - name: live paper 90 s (windows\run.cmd, strategy of this branch from .env)
+        shell: cmd
+        run: call windows\run.cmd --duration 90 --warmup 0
+
+      - name: check live run in the database
+        shell: cmd
+        run: .venv\Scripts\python -c "import sqlite3, json; r = sqlite3.connect('data/hope.db').execute('select run_id, strategy, status, summary_json from runs order by run_id desc limit 1').fetchone(); s = json.loads(r[3] or '{}'); print('run', r[0], r[1], r[2], 'events', s.get('n_events'), 'fills', s.get('n_fills'), 'ws', s.get('ws')); assert r[2] == 'finished', r[2]; print('::warning::no market data received from Bybit WebSocket' if (s.get('n_events') or 0) < 50 else 'market data OK')"
+
+      - name: monitor (windows\monitor.cmd)
+        shell: pwsh
+        run: |
+          $env:MONITOR_DB = "data/hope.db,data/bt_ci.db"
+          $p = Start-Process -FilePath cmd.exe -ArgumentList "/c", "call windows\monitor.cmd" -PassThru -WindowStyle Hidden
+          $ok = $false
+          for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
+            Start-Sleep -Seconds 2
+            try { $r = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/api/runs; $ok = $r.StatusCode -eq 200 } catch {}
+          }
+          if (-not $ok) { throw "monitor did not start" }
+          $runs = ($r.Content | ConvertFrom-Json).runs
+          $runs | Select-Object id, name, strategy, mode, status, n_fills | Format-Table | Out-String | Write-Host
+          if ($runs.Count -lt 2) { throw "expected live + backtest runs in the monitor" }
+          $id = $runs[0].id
+          (Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8000/api/runs/$id/summary").StatusCode
+          $page = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/
+          if ($page.Content -notmatch "hope") { throw "dashboard page is wrong" }
+          Get-CimInstance Win32_Process -Filter "Name='hope.exe'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+      - name: autostart on/off (windows\autostart.cmd)
+        shell: cmd
+        run: |
+          call windows\autostart.cmd on
+          if not exist "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\hope-lab.cmd" exit /b 1
+          type "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\hope-lab.cmd"
+          call windows\autostart.cmd off
+          if exist "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\hope-lab.cmd" exit /b 1

@@ -5,14 +5,38 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from pathlib import Path
 
 import typer
 
 app = typer.Typer(help="hope — лаборатория стратегий Bybit (paper, бэктест, монитор)", no_args_is_help=True, pretty_exceptions_enable=False)
 
+# код выхода при остановке по Ctrl+C: скрипты автоперезапуска (windows/run.cmd) по нему понимают, что перезапуск не нужен
+EXIT_INTERRUPTED = 130
+
+
+@app.callback()
+def _main() -> None:
+    """Перед любой командой: переменные из .env текущего каталога (STRATEGY_CONFIG, HOPE__..., MONITOR_PORT)."""
+    from .config import load_dotenv
+
+    load_dotenv(".env")
+
+
+def _utf8_streams() -> None:
+    """Вывод в файл/канал на Windows по умолчанию в cp1251 — переключаем на UTF-8, консоль и так Unicode."""
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+        if enc != "utf8" and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
 
 def _setup_logging(verbose: bool) -> None:
+    _utf8_streams()
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname).1s %(name)s: %(message)s",
@@ -37,25 +61,65 @@ def _load(config: list[Path] | None, symbols: str | None, set_: list[str] | None
         cur[parts[-1]] = _coerce(v)
     if symbols:
         over.setdefault("exchange", {})["symbols"] = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not config:
+        from .config import default_strategy_config
+
+        d = default_strategy_config()
+        if d is not None:
+            logging.getLogger("hope.cli").info("конфиг стратегии из STRATEGY_CONFIG: %s", d)
+            config = [d]
     return load_config(*(config or []), overrides=over)
+
+
+def _run_async(coro):
+    """asyncio.run с аккуратным выходом по Ctrl+C (код 130, без трассировки)."""
+    try:
+        return asyncio.run(coro)
+    except KeyboardInterrupt:
+        typer.echo("остановлено (Ctrl+C)", err=True)
+        raise typer.Exit(EXIT_INTERRUPTED) from None
 
 
 @app.command()
 def run(
-    config: list[Path] = typer.Option(None, "--config", "-c", help="YAML стратегии (можно несколько, накладываются)"),
+    config: list[Path] = typer.Option(None, "--config", "-c", help="YAML стратегии (можно несколько, накладываются); по умолчанию STRATEGY_CONFIG из .env"),
     symbols: str = typer.Option(None, "--symbols", "-s", help="Список символов через запятую"),
     duration: float = typer.Option(None, "--duration", help="Остановиться через N секунд"),
     name: str = typer.Option(None, "--name", help="Имя запуска"),
     warmup: int = typer.Option(None, "--warmup", help="Свечей прогрева (по умолчанию strategy.history_bars; 0 = без прогрева)"),
+    restart: bool = typer.Option(False, "--restart", help="Перезапускать движок после сбоя (сеть, исключение) с паузой 15–120 с"),
     set_: list[str] = typer.Option(None, "--set", help="Переопределить ключ: section.key=value"),
     verbose: bool = typer.Option(False, "-v"),
 ) -> None:
     """Запустить live paper-торговлю на публичном потоке Bybit."""
+    import time
+
     _setup_logging(verbose)
     from .engine.live import run_live
+    from .engine.strategy import load_strategy_class
 
+    log = logging.getLogger("hope.cli")
     cfg = _load(config, symbols, set_)
-    asyncio.run(run_live(cfg, duration, name, warmup))
+    load_strategy_class(cfg.strategy.class_path)  # ошибка в пути к стратегии — сразу, без цикла перезапусков
+    failures = 0
+    while True:
+        started = time.monotonic()
+        try:
+            _run_async(run_live(cfg, duration, name, warmup))
+            return
+        except typer.Exit:
+            raise
+        except Exception as e:  # noqa: BLE001
+            if not restart:
+                raise
+            # долгий успешный прогон сбрасывает счётчик: пауза растёт только при частых падениях подряд
+            failures = 1 if time.monotonic() - started > 600 else failures + 1
+            delay = min(15 * failures, 120)
+            log.error("движок упал (%s: %s); перезапуск через %d с, Ctrl+C — отмена", type(e).__name__, e, delay)
+            try:
+                time.sleep(delay)
+            except KeyboardInterrupt:
+                raise typer.Exit(EXIT_INTERRUPTED) from None
 
 
 @app.command()
@@ -77,7 +141,7 @@ def backtest(
     from .engine.backtest import run_backtest
 
     cfg = _load(config, symbols, set_)
-    summary = asyncio.run(run_backtest(cfg, from_, to, name, queue_usd, funding, db, mode=mode))
+    summary = _run_async(run_backtest(cfg, from_, to, name, queue_usd, funding, db, mode=mode))
     summary.pop("instruments", None)
     typer.echo(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
 
@@ -99,7 +163,7 @@ def replay(
 
     cfg = _load(config, symbols, set_)
     syms = [x.strip().upper() for x in symbols.split(",")] if symbols else None
-    summary = asyncio.run(run_replay(cfg, source_db, source_run, name, db, syms))
+    summary = _run_async(run_replay(cfg, source_db, source_run, name, db, syms))
     typer.echo(json.dumps({k: v for k, v in summary.items() if k != "instruments"}, ensure_ascii=False, indent=2, default=str))
 
 
@@ -123,16 +187,38 @@ def download(
 @app.command()
 def monitor(
     db: str = typer.Option("data/hope.db", "--db", help="Путь к БД (или несколько через запятую)"),
-    host: str = typer.Option("0.0.0.0", "--host"),
-    port: int = typer.Option(8000, "--port"),
+    host: str = typer.Option("0.0.0.0", "--host", help="127.0.0.1 — только этот компьютер (без запроса брандмауэра Windows)"),
+    port: int = typer.Option(None, "--port", help="Порт (по умолчанию MONITOR_PORT из .env или 8000)"),
+    open_browser: bool = typer.Option(False, "--open", help="Открыть монитор в браузере после старта"),
 ) -> None:
     """Веб-монитор результатов (FastAPI + Plotly), только чтение БД."""
+    import os
+
     _setup_logging(False)
     import uvicorn
 
     from .monitor.app import create_app
 
-    uvicorn.run(create_app(db), host=host, port=port, log_level="info")
+    if port is None:
+        port = int(os.environ.get("MONITOR_PORT") or 8000)
+    # первый запуск: движок ещё не создал БД — создаём пустую со схемой, чтобы монитор сразу открывался без ошибки
+    from .store.db import Store
+
+    for part in db.split(","):
+        pth = Path(part.strip())
+        if part.strip() and not pth.exists():
+            Store(pth).close()
+            logging.getLogger("hope.cli").info("создана пустая БД %s (движок ещё не запускался)", pth)
+    if open_browser:
+        import threading
+        import webbrowser
+
+        url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}/"
+        threading.Timer(2.0, lambda: webbrowser.open(url)).start()
+    try:
+        uvicorn.run(create_app(db), host=host, port=port, log_level="info")
+    except KeyboardInterrupt:
+        raise typer.Exit(EXIT_INTERRUPTED) from None
 
 
 @app.command()
@@ -183,7 +269,7 @@ def scan(
         if out:
             import csv
 
-            with open(out, "w", newline="") as f:
+            with open(out, "w", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
                 w.writerow(["symbol", "last", "turnover_24h", "tick_bps", "spread_bps", "tick_est", "funding_rate", "open_interest_value", "n"])
                 for r in rows:

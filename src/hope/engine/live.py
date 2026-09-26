@@ -94,11 +94,19 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    sigs = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGBREAK"):  # Windows: Ctrl+Break и закрытие окна консоли
+        sigs.append(signal.SIGBREAK)
+    prev_handlers: dict = {}
+    for sig in sigs:
         try:
             loop.add_signal_handler(sig, stop.set)
         except (NotImplementedError, RuntimeError):
-            pass
+            # Windows: add_signal_handler не поддерживается — обычный обработчик, который будит цикл
+            try:
+                prev_handlers[sig] = signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop.set))
+            except (ValueError, OSError):
+                pass
     if duration_secs:
         loop.call_later(duration_secs, stop.set)
 
@@ -127,6 +135,9 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
             if loop.time() >= next_tick:
                 core.tick(now_ms())
                 next_tick = loop.time() + tick_every
+    except asyncio.CancelledError:
+        status = "stopped"
+        raise
     except Exception as e:  # noqa: BLE001
         status = "crashed"
         log.exception("движок упал: %s", e)
@@ -146,6 +157,11 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
                 frames = t.get_stack(limit=4)
                 where = " <- ".join(f"{f.f_code.co_name}:{f.f_lineno}" for f in frames)
                 log.warning("зависшая задача %s done=%s: %s", t.get_name(), t.done(), where)
+        for sig, prev in prev_handlers.items():  # вернуть обработчики: иначе они держат закрытый цикл
+            try:
+                signal.signal(sig, prev)
+            except (ValueError, OSError, TypeError):
+                pass
         log.info("остановка: стратегия и итоговые снимки ...")
         core.stop(now_ms())
         summary = core.summary()

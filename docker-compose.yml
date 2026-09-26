@@ -1,6 +1,8 @@
-# Запуск: docker compose up -d --build
-# Движок читает конфиг стратегии из STRATEGY_CONFIG (по умолчанию strategies/current/config.yaml),
-# монитор — ту же БД в томе ./data. Монитор: http://localhost:8000
+# Запуск: docker compose up -d --build        (Windows: windows\docker.cmd up)
+# Конфиг стратегии — переменная STRATEGY_CONFIG в .env (на ветке strategy/<имя> уже указан).
+# Данные (SQLite) — HOPE_DATA: путь (./data, по умолчанию) или имя тома Docker (hope-data).
+# На Windows используйте том hope-data: SQLite в режиме WAL ненадёжен на папках Windows, проброшенных в Docker.
+# Монитор: http://localhost:${MONITOR_PORT:-8000}
 services:
   engine:
     build:
@@ -9,12 +11,13 @@ services:
         EXTRAS: ${HOPE_EXTRAS:-}
     container_name: hope-engine
     restart: unless-stopped
-    command: ["run", "--config", "${STRATEGY_CONFIG:-strategies/current/config.yaml}"]
+    command: ["run", "--restart"]
     environment:
+      - STRATEGY_CONFIG=${STRATEGY_CONFIG:-strategies/example_ema/config.yaml}
       - HOPE__store__db_path=/app/data/hope.db
       - HOPE__run__data_dir=/app/data
     volumes:
-      - ./data:/app/data
+      - ${HOPE_DATA:-./data}:/app/data
       - ./strategies:/app/strategies:ro
       - ./config:/app/config:ro
     logging:
@@ -32,6 +35,9 @@ services:
     ports:
       - "${MONITOR_PORT:-8000}:8000"
     volumes:
-      - ./data:/app/data
+      - ${HOPE_DATA:-./data}:/app/data
     depends_on:
       - engine
+
+volumes:
+  hope-data:

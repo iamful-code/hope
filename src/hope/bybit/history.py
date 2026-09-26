@@ -90,7 +90,7 @@ class TradeHistory:
 
     @staticmethod
     def _parse_csv(content: bytes) -> pd.DataFrame:
-        with gzip.open(io.BytesIO(content), "rt") as f:
+        with gzip.open(io.BytesIO(content), "rt", encoding="utf-8") as f:
             df = pd.read_csv(f, usecols=["timestamp", "side", "size", "price"])
         out = pd.DataFrame(
             {
