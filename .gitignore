@@ -1,0 +1,21 @@
+# данные и результаты
+data/
+*.db
+*.db-wal
+*.db-shm
+*.parquet
+*.csv.gz
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+# окружение
+.env
+# IDE
+.idea/
+.vscode/

@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------------------
+# hope: базовая конфигурация лаборатории стратегий (Bybit, paper-торговля).
+# Конфиг стратегии (strategies/<имя>/config.yaml) накладывается поверх этого файла.
+# Любой ключ можно переопределить переменной окружения HOPE__section__key=value
+# (двойное подчёркивание = уровень вложенности), например HOPE__store__db_path=/data/x.db
+# ---------------------------------------------------------------------------
+
+run:
+  # Человекочитаемое имя запуска; в БД к нему добавится id и время старта
+  name: ""
+  # Каталог для данных (БД, кэш инструментов, история)
+  data_dir: data
+
+exchange:
+  # linear (USDT-перпетуалы) | spot | inverse
+  category: linear
+  rest_url: https://api.bybit.com
+  ws_url: wss://stream.bybit.com/v5/public/linear
+  # Глубина стакана в подписке: 1 (10 мс), 50 (20 мс), 200/500 (100 мс)
+  orderbook_depth: 1
+  # Топиков на одно WebSocket-соединение и аргументов в одном subscribe
+  topics_per_connection: 200
+  args_per_subscribe: 50
+  # Подписываться ли на публичные сделки и kline (свечи строятся из сделок; kline — для сверки)
+  subscribe_trades: true
+  subscribe_kline: false
+  # Символы для торговли. Пусто = все ликвидные по фильтру ниже (нужен REST)
+  symbols: [BTCUSDT, ETHUSDT]
+  quote_coin: USDT
+  # Минимальный оборот за 24ч при автоматическом выборе символов
+  min_turnover_24h_usd: 5000000
+  max_symbols: 50
+
+fees:
+  # Bybit деривативы VIP0: мейкер 0.02%, тейкер 0.055%. Спот: 0.1% / 0.1%
+  maker: 0.0002
+  taker: 0.00055
+
+paper:
+  # Задержка доставки ордера/отмены на биржу, мс
+  latency_ms: 60
+  initial_equity_usd: 10000.0
+  # Дополнительное проскальзывание тейкерных ордеров сверх касания, bps
+  taker_slippage_bps: 0.0
+  # Учитывать фандинг по перпетуалам (ставка из тикера, начисление каждые 8ч)
+  apply_funding: true
+
+risk:
+  # Дневной лимит убытка (USDT); при достижении — kill-switch: только выходы
+  max_daily_loss_usd: 300.0
+  # Максимальная суммарная экспозиция |позиций| в USDT
+  max_gross_notional_usd: 5000.0
+  # Максимальная позиция по одному символу, USDT
+  max_position_notional_usd: 1000.0
+  max_open_orders_per_symbol: 10
+
+store:
+  db_path: data/hope.db
+  # Периодичность снимков equity/позиций, секунд
+  snapshot_secs: 5
+  # Писать ли рыночные данные (BBO/сделки) в БД — дорого; для отладки
+  record_market: false
+
+strategy:
+  # Путь к классу стратегии: "модуль:Класс"
+  class: hope.strategies.examples:BboImbalance
+  # Таймфрейм свечей, которые движок строит из сделок и отдаёт в on_candle
+  timeframe: 1m
+  # Сколько свечей держать в истории для стратегии
+  history_bars: 500
+  # Периодический таймер стратегии, мс
+  timer_ms: 1000
+  params: {}
+
+backtest:
+  # Источник истории: public.bybit.com (сделки по дням) — строятся свечи и BBO-прокси
+  from: "2026-09-01"
+  to: "2026-09-07"
+  # Проскальзывание тейкера в бэктесте, bps (нет стакана — только сделки)
+  taker_slippage_bps: 1.0
+
+monitor:
+  host: 0.0.0.0
+  port: 8000

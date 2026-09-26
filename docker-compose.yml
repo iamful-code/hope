@@ -1,0 +1,31 @@
+# Запуск: docker compose up -d --build
+# Движок читает конфиг стратегии из STRATEGY_CONFIG (по умолчанию strategies/current/config.yaml),
+# монитор — ту же БД в томе ./data. Монитор: http://localhost:8000
+services:
+  engine:
+    build: .
+    container_name: hope-engine
+    restart: unless-stopped
+    command: ["run", "--config", "${STRATEGY_CONFIG:-strategies/current/config.yaml}"]
+    environment:
+      - HOPE__store__db_path=/app/data/hope.db
+      - HOPE__run__data_dir=/app/data
+    volumes:
+      - ./data:/app/data
+      - ./strategies:/app/strategies:ro
+      - ./config:/app/config:ro
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+
+  monitor:
+    build: .
+    container_name: hope-monitor
+    restart: unless-stopped
+    command: ["monitor", "--db", "/app/data/hope.db", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${MONITOR_PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - engine
