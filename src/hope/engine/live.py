@@ -7,6 +7,7 @@ import logging
 import os
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 from ..bybit.instruments import InstrumentCatalog
@@ -92,6 +93,26 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
             topics.append(f"tickers.{s}")
     ws.subscribe(topics)
 
+    # Инициализация стратегии (импорт Freqtrade, прогрев индикаторов и т.п.) может занять десятки секунд,
+    # а на «холодном» Windows — минуты. Она синхронная и блокирует цикл событий, поэтому выполняется ДО
+    # подключения к WebSocket и до отсчёта --duration: иначе таймер истекает, пока стратегия грузится.
+    status = "finished"
+    zombie = False
+    t_init = time.monotonic()
+    try:
+        core.start(now_ms())
+    except BaseException as e:
+        failed = "crashed" if isinstance(e, Exception) else "stopped"
+        if isinstance(e, Exception):
+            log.exception("ошибка инициализации стратегии: %s", e)
+        store.event(now_ms(), "error", f"ошибка инициализации стратегии: {type(e).__name__}: {e}")
+        store.finish_run(failed, core.summary())
+        store.close()
+        raise
+    init_secs = time.monotonic() - t_init
+    if init_secs > 5:
+        log.info("инициализация стратегии заняла %.0f с", init_secs)
+
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     sigs = [signal.SIGINT, signal.SIGTERM]
@@ -111,10 +132,7 @@ async def run_live(cfg: Config, duration_secs: float | None = None, run_name: st
         loop.call_later(duration_secs, stop.set)
 
     ws_task = asyncio.create_task(ws.run(), name="ws")
-    status = "finished"
-    zombie = False
-    core.start(now_ms())
-    store.event(core.now, "info", f"старт live: {len(symbols)} символов, {len(topics)} топиков, инструменты={src}")
+    store.event(now_ms(), "info", f"старт live: {len(symbols)} символов, {len(topics)} топиков, инструменты={src}")
     tick_every = 0.1
     next_tick = loop.time()
     try:
