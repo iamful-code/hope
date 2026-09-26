@@ -42,6 +42,15 @@ class SyntheticBB(IStrategy):
         df.loc[df["close"] > df["mid"], "exit_long"] = 1
         df.loc[df["close"] < df["mid"], "exit_short"] = 1
         return df
+
+    def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
+        # как в community-стратегиях: читаем проанализированный DataFrame через self.dp
+        df, _ = self.dp.get_analyzed_dataframe(pair=pair, timeframe=self.timeframe)
+        if df is None or len(df) == 0:
+            return "dp_empty"
+        if current_profit > 0.004:
+            return "custom_tp"
+        return None
 '''
 
 
@@ -98,5 +107,7 @@ def test_freqtrade_adapter_trades_synthetic_series(strategy_file: Path, tmp_path
     sides = {s for pur, s, _ in rows if pur == "entry"}
     # были и лонги, и шорты (теги входа), и хотя бы один выход по сигналу/ROI
     assert "low" in entry_tags and "high" in entry_tags and sides == {"Buy", "Sell"}
-    assert exit_tags & {"exit_signal", "roi", "stop_loss", "trailing_stop_loss"}
+    assert exit_tags & {"exit_signal", "roi", "stop_loss", "trailing_stop_loss", "custom_tp"}
+    assert "dp_empty" not in exit_tags, "custom_exit не видит DataFrame через self.dp"
+    assert "custom_tp" in exit_tags, "custom_exit с self.dp должен срабатывать"
     assert len(rows) == pf.n_fills
