@@ -36,12 +36,11 @@ def _utf8_streams() -> None:
 
 
 def _setup_logging(verbose: bool) -> None:
+    from .logutil import setup_logging
+
     _utf8_streams()
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s %(levelname).1s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    # вывод в консоль — в отдельном потоке: выделение текста в окне Windows больше не останавливает движок
+    setup_logging(logging.DEBUG if verbose else logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("websockets").setLevel(logging.WARNING)
 
@@ -215,8 +214,17 @@ def monitor(
 
         url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}/"
         threading.Timer(2.0, lambda: webbrowser.open(url)).start()
+    import signal
+
+    def _term(signum, frame):
+        # uvicorn после остановки по SIGTERM (docker stop) повторяет сигнал; обработчик по умолчанию убил бы процесс
+        # без atexit, и последние строки лога остались бы в очереди
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _term)
     try:
-        uvicorn.run(create_app(db), host=host, port=port, log_level="info")
+        # log_config=None: логи uvicorn идут через общую очередь, а не пишут в консоль напрямую
+        uvicorn.run(create_app(db), host=host, port=port, log_level="info", log_config=None)
     except KeyboardInterrupt:
         raise typer.Exit(EXIT_INTERRUPTED) from None
 
